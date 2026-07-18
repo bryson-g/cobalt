@@ -1,6 +1,12 @@
 wax.shared.CobaltStartTime = tick()
 wax.shared.IS_ACTOR = false
 
+-- rh-farm fork marker: confirms this custom build (not upstream) is what got loadstring'd.
+-- See github.com/bryson-g/cobalt. Customized for farm network recon (AI agent + operator).
+if not wax.shared.IS_ACTOR then
+	print("[Cobalt·rh] rh-farm fork loaded — custom network spy for farm recon")
+end
+
 local FileLogger = require(script.Utils.FileLog)
 
 -- Environment
