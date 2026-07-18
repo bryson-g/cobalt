@@ -29,7 +29,7 @@ return function(props: {
 		Parent = MainFrame,
 
 		["TextLabel"] = {
-			Text = "Cobalt",
+			Text = "Cobalt (fork)",
 			TextSize = 18,
 			Position = UDim2.fromOffset(0, 1),
 			Size = UDim2.new(1, 0, 1, -1),
