@@ -206,42 +206,69 @@ local function SafeValue(value, depth: number)
 	return tostring(value)
 end
 
--- Snapshot the live capture as a plain table. opts.maxCallsPerRemote caps calls per remote (newest).
+-- Query the live capture as a plain table — the agent-facing "query remotes instead of grepping"
+-- interface (call it over the bridge). All opts optional:
+--   name              substring match on the remote name OR full path (case-insensitive)
+--   direction         "Incoming" | "Outgoing"
+--   class             match ClassName (e.g. "RemoteEvent")
+--   minCalls          only remotes with >= this many calls
+--   includeIgnored    default true; set false to hide ignored remotes
+--   includeArgs       default true; set false for a lightweight name/count-only listing
+--   maxCallsPerRemote cap calls returned per remote (newest first), default 40
+--   limit             cap number of remotes returned (after sorting by call count desc)
 function AgentAPI.GetLogs(opts): { any }
 	opts = opts or {}
 	local maxCalls = opts.maxCallsPerRemote or 40
+	local nameFilter = opts.name and string.lower(opts.name) or nil
 	local out = {}
 	for direction, category in pairs(wax.shared.Logs or {}) do
+		if opts.direction and direction ~= opts.direction then
+			continue
+		end
 		for instance, log in pairs(category) do
 			if typeof(instance) ~= "Instance" then
 				continue
 			end
+			if opts.class and instance.ClassName ~= opts.class then
+				continue
+			end
+			if opts.includeIgnored == false and log.Ignored then
+				continue
+			end
 			local total = #log.Calls
-			if total == 0 and opts.skipEmpty ~= false then
-				-- keep remotes with 0 calls only if explicitly asked (default: skip)
+			if opts.minCalls and total < opts.minCalls then
+				continue
 			end
+			local key = RemoteKey(instance)
+			if nameFilter and not (string.find(string.lower(instance.Name), nameFilter, 1, true) or string.find(string.lower(key), nameFilter, 1, true)) then
+				continue
+			end
+
 			local calls = {}
-			local startIndex = math.max(1, total - maxCalls + 1)
-			for i = startIndex, total do
-				local call = log.Calls[i]
-				local args = {}
-				local rawArgs = call.Arguments
-				if type(rawArgs) == "table" then
-					local n = rawArgs.n or #rawArgs
-					for j = 1, n do
-						args[j] = SafeValue(rawArgs[j], 0)
+			if opts.includeArgs ~= false then
+				local startIndex = math.max(1, total - maxCalls + 1)
+				for i = startIndex, total do
+					local call = log.Calls[i]
+					local args = {}
+					local rawArgs = call.Arguments
+					if type(rawArgs) == "table" then
+						local n = rawArgs.n or #rawArgs
+						for j = 1, n do
+							args[j] = SafeValue(rawArgs[j], 0)
+						end
 					end
+					calls[#calls + 1] = {
+						index = i,
+						time = call.CreationTime,
+						blocked = call.Blocked or false,
+						isExecutor = call.IsExecutor or false,
+						args = args,
+					}
 				end
-				calls[#calls + 1] = {
-					index = i,
-					time = call.CreationTime,
-					blocked = call.Blocked or false,
-					isExecutor = call.IsExecutor or false,
-					args = args,
-				}
 			end
+
 			out[#out + 1] = {
-				remote = RemoteKey(instance),
+				remote = key,
 				name = instance.Name,
 				class = instance.ClassName,
 				direction = direction,
@@ -251,8 +278,23 @@ function AgentAPI.GetLogs(opts): { any }
 			}
 		end
 	end
+
+	-- busiest remotes first, then optional limit
+	table.sort(out, function(a, b)
+		return a.callCount > b.callCount
+	end)
+	if opts.limit and #out > opts.limit then
+		local trimmed = {}
+		for i = 1, opts.limit do
+			trimmed[i] = out[i]
+		end
+		return trimmed
+	end
 	return out
 end
+
+-- Alias: reads as a query at the call site.
+AgentAPI.Query = AgentAPI.GetLogs
 
 -- Write the capture snapshot to Cobalt/Export/*.json. Returns (path, remoteCount).
 function AgentAPI.ExportLogs(fileName: string?, opts): (string?, number)
