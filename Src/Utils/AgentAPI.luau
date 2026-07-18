@@ -279,6 +279,29 @@ function AgentAPI.ExportLogs(fileName: string?, opts): (string?, number)
 	return "Cobalt/Export/" .. name, #snapshot
 end
 
+-- Seed the farm-tuned noise filter: ignore the high-frequency UI/needs/animation remotes that bury
+-- the signal (schedule/class/reward remotes are deliberately NOT here). Merges into the persisted
+-- set, so operator overrides stick. Returns how many patterns were added. Callable from the agent.
+local FARM_NOISE = {
+	"UpdateHygieneBar", "UpdateEnergy", "UpdateHunger", "UpdateHealthBar",
+	"ToggleButterflyVisibility", "StartTrackingButterfly",
+	"LocalSoundHelper", "TeleportBubbles", "SlideAnnouncementFrame",
+	"SetBottomTabTimer", "SetBottomTabText",
+	"DiamondPickupLocalAnimation", "ClientsidedAnimation", "ClientsidedAnimations",
+	"TriggerLevelUpAnimation",
+}
+function AgentAPI.SetFarmDefaults(): number
+	local added = 0
+	for _, pattern in ipairs(FARM_NOISE) do
+		AgentAPI.IgnoreRemote(pattern)
+		added += 1
+	end
+	if wax.shared.Sonner then
+		pcall(wax.shared.Sonner.info, `Applied farm noise filter ({added} patterns)`)
+	end
+	return added
+end
+
 -- Clear the captured-call view (all remotes, or a specific instance/direction). Refreshes the UI.
 function AgentAPI.ClearLogs(instance, direction)
 	if wax.shared.ClearLogs then

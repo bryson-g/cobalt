@@ -501,7 +501,7 @@ wax.shared.Connect(wax.shared.LocalPlayer.OnTeleport:Connect(function()
 
 	-- getgenv().COBALT_LATEST_URL for dev environments
 	local CobaltURL = getgenv().COBALT_LATEST_URL
-		or "https://github.com/notpoiu/cobalt/releases/latest/download/Cobalt.luau"
+		or "https://raw.githubusercontent.com/bryson-g/cobalt/main/Cobalt.luau"
 	wax.shared.queue_on_teleport(string.format(
 		[[
 		if getgenv().CobaltAutoExecuted then
