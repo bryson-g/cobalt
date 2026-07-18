@@ -223,12 +223,12 @@ return {
 	}),
 
 	--// File Logging Section \\--
-	-- rh fork: default ON so full-session capture persists to disk without the manual toggle
-	-- (auto-start capture). The agent should prefer the compact JSON export (CobaltAgent.ExportLogs)
-	-- over grepping these; toggle this off from Settings if the .log files grow too large.
+	-- rh fork: default OFF. The compact JSON export (CobaltAgent.ExportLogs) is the agent-facing
+	-- capture; the giant .log files are opt-in (heavy disk I/O every remote). Turn on from Settings
+	-- for a full-session disk trace when you actually need one.
 	EnableLogging = Setting.new({
 		Key = "EnableLogging",
-		Default = true,
+		Default = false,
 		Schema = Schema.boolean(),
 		UI = {
 			Type = "Checkbox",
