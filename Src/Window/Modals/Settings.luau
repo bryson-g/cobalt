@@ -266,12 +266,36 @@ return function(props: {
 	--// Remotes Filtering Section \\--
 	local IgnoredRemotesSection = MainSettings:CreateSection("Ignored Remotes")
 	do
-		IgnoredRemotesSection:CreateRemoteList("IgnoredRemotes", {
+		local IgnoredList = IgnoredRemotesSection:CreateRemoteList("IgnoredRemotes", {
 			NullMessage = "No remotes have been ignored yet.",
-			Callback = function(Log)
-				Log.Ignored = false
+			Callback = function(RemoteData)
+				-- un-ignore: clear the live log's flag + persist the removal (rh fork).
+				local Instance = RemoteData.Instance
+				if RemoteData.Ignored ~= nil then
+					RemoteData.Ignored = false
+				end
+				local Category = Instance and wax.shared.Logs and wax.shared.Logs[RemoteData.Type]
+				local Live = Category and Category[Instance]
+				if Live then
+					Live.Ignored = false
+				end
+				if wax.shared.AgentAPI and Instance then
+					pcall(wax.shared.AgentAPI.SetIgnored, Instance, false)
+				end
 			end,
 		})
+
+		-- rh fork: surface remotes that are already ignored (restored from Cobalt/Settings.json this
+		-- session) so the operator can see + toggle the persisted set, not just ones ignored just now.
+		for _, Category in pairs(wax.shared.Logs or {}) do
+			for Instance, Log in pairs(Category) do
+				if Log.Ignored and typeof(Instance) == "Instance" then
+					pcall(function()
+						IgnoredList:AddToList({ Instance = Instance, Type = Log.Type })
+					end)
+				end
+			end
+		end
 	end
 
 	local BlockedRemotesSection = MainSettings:CreateSection("Blocked Remotes")

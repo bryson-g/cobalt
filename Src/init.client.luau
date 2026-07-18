@@ -469,9 +469,16 @@ wax.shared.Logs = {
 	Incoming = {},
 }
 
+-- rh fork: Agent API (persistent ignore + machine-readable export + programmatic control).
+wax.shared.AgentAPI = require(script.Utils.AgentAPI)
+
 wax.shared.NewLog = function(Instance, Type, CallingScript)
 	local Log = wax.shared.Log.new(Instance, Type, wax.shared.GetTableLength(wax.shared.Logs[Type]) + 1, CallingScript)
 	wax.shared.Logs[Type][Instance] = Log
+	-- rh fork: re-apply a persisted ignore decision so it survives re-injection.
+	if wax.shared.AgentAPI then
+		pcall(wax.shared.AgentAPI.RestoreLog, Log)
+	end
 	return Log
 end
 
@@ -509,6 +516,10 @@ wax.shared.Connect(wax.shared.LocalPlayer.OnTeleport:Connect(function()
 end))
 
 getgenv().Cobalt = wax
+
+-- rh fork: clean, bridge-callable API namespace for the AI agent / operator. See Src/Utils/AgentAPI.
+-- e.g. getgenv().CobaltAgent.ExportLogs() / .IgnoreRemote("BindableEvent path") / .ListIgnored().
+getgenv().CobaltAgent = wax.shared.AgentAPI
 
 task.wait(1)
 if AnticheatData.Disabled then

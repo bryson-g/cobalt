@@ -165,6 +165,21 @@ return function(props: {
 		return (Left.Order or 0) < (Right.Order or 0)
 	end)
 
+	-- rh fork: quick "clear captured calls" button so you can reset the view to a clean slate
+	-- without digging into Settings. Clears all logs + refreshes the list (wax.shared.ClearLogs).
+	table.insert(TopButtonData, {
+		Type = "Button",
+		Icon = "trash",
+		Order = 9998,
+		Callback = function()
+			if wax.shared.ClearLogs then
+				pcall(wax.shared.ClearLogs)
+				if wax.shared.Sonner then
+					wax.shared.Sonner.success("Cleared captured calls")
+				end
+			end
+		end,
+	})
 	table.insert(TopButtonData, {
 		Type = "Separator",
 	})

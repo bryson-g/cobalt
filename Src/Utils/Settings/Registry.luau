@@ -19,6 +19,17 @@ local RemoteClassSelection = Schema.table():refine(function(Value)
 	return true
 end, "must map remote class names to booleans")
 
+-- rh fork: persisted per-remote ignore set ({ [remotePath] = true }), managed by AgentAPI + the
+-- Settings > Ignored Remotes list + right-click Ignore. See Src/Utils/AgentAPI.luau.
+local StringBoolMap = Schema.table():refine(function(Value)
+	for Key, Enabled in Value do
+		if type(Key) ~= "string" or type(Enabled) ~= "boolean" then
+			return false
+		end
+	end
+	return true
+end, "must map remote paths to booleans")
+
 return {
 	--// Internal Stuff \\--
 	LimitedLoggingAcknowledged = Setting.new({
@@ -203,10 +214,21 @@ return {
 	}),
 
 
+	--// rh fork: persisted per-remote ignore set (no UI control — surfaced via the Ignored Remotes
+	-- list + right-click Ignore + getgenv().CobaltAgent). Saved to Cobalt/Settings.json.
+	PersistentIgnores = Setting.new({
+		Key = "PersistentIgnores",
+		Default = {},
+		Schema = StringBoolMap,
+	}),
+
 	--// File Logging Section \\--
+	-- rh fork: default ON so full-session capture persists to disk without the manual toggle
+	-- (auto-start capture). The agent should prefer the compact JSON export (CobaltAgent.ExportLogs)
+	-- over grepping these; toggle this off from Settings if the .log files grow too large.
 	EnableLogging = Setting.new({
 		Key = "EnableLogging",
-		Default = false,
+		Default = true,
 		Schema = Schema.boolean(),
 		UI = {
 			Type = "Checkbox",

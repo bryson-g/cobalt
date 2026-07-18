@@ -488,6 +488,11 @@ function Log:Ignore()
 				IgnoredRemoteList:RemoveFromList(self)
 			end
 		end
+
+		-- rh fork: persist the ignore decision to Cobalt/Settings.json so it survives re-injection.
+		if wax.shared.AgentAPI then
+			pcall(wax.shared.AgentAPI.SetIgnored, self.Instance, self.Ignored)
+		end
 	end
 end
 
