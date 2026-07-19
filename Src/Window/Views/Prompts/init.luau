@@ -6,6 +6,7 @@
 
 local Interface = require("@src/Utils/UI/Interface")
 local Constants = require("@src/Window/Constants")
+local Icons = require("@src/Utils/UI/Assets/Icons")
 
 -- palette (matches the remote view)
 local BG = Color3.fromRGB(25, 25, 25)
@@ -30,6 +31,12 @@ return function(props: {
 
 	local Buttons = {} -- [promptLog] = { Root, Name, Count, Icon }
 	local PromptCount = 0
+
+	-- Grouping: prompts on the same object (a washer's Open/Close/Turn On/…) collapse under one
+	-- header, keyed by the ancestor Model that PromptSpy stamped on the log at trigger time.
+	local Groups = {} -- [groupKey] = { Key, Root, Chevron, CountLabel, Children, Index, Logs }
+	local GroupOrder = 0
+	local Collapsed = {} -- [groupKey] = true while collapsed (session-local)
 
 	--// Helpers //---------------------------------------------------------------------------------
 	local function PromptTitle(log): string
@@ -460,6 +467,163 @@ return function(props: {
 		RenderActivations(log)
 	end
 
+	--// Groups //---------------------------------------------------------------------------------
+	local SetCollapsed
+
+	local function RefreshGroupCount(group)
+		local total = 0
+		for log in pairs(group.Logs) do
+			total += #log.Activations
+		end
+		group.CountLabel.Text = "x" .. total
+	end
+
+	SetCollapsed = function(group, collapsed)
+		Collapsed[group.Key] = collapsed or nil
+		-- UIListLayout skips invisible children, so the group frame shrinks to just its header
+		group.Children.Visible = not collapsed
+		Icons.SetIcon(group.Chevron, collapsed and "chevron-right" or "chevron-down")
+	end
+
+	local function EnsureGroup(log)
+		local key = log.GroupKey or "__ungrouped"
+		local existing = Groups[key]
+		if existing then
+			return existing
+		end
+
+		GroupOrder += 1
+		local Root = Interface.New("Frame", {
+			BackgroundTransparency = 1,
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 0),
+			LayoutOrder = GroupOrder,
+			Parent = PromptList,
+
+			["UIListLayout"] = {
+				FillDirection = Enum.FillDirection.Vertical,
+				HorizontalAlignment = Enum.HorizontalAlignment.Left,
+				Padding = UDim.new(0, 4),
+			},
+		})
+
+		local Header = Interface.New("TextButton", {
+			BackgroundColor3 = Color3.fromRGB(38, 38, 38),
+			Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = 0,
+			Text = "",
+			Parent = Root,
+
+			["UICorner"] = {
+				CornerRadius = UDim.new(0, 4),
+			},
+
+			["UIPadding"] = {
+				PaddingLeft = UDim.new(0, 4),
+				PaddingRight = UDim.new(0, 8),
+			},
+		})
+
+		local Chevron = Interface.NewIcon("chevron-down", {
+			ImageTransparency = 0.3,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 2, 0.5, 0),
+			Size = UDim2.fromOffset(16, 16),
+			Parent = Header,
+		})
+
+		Interface.New("TextLabel", {
+			Position = UDim2.fromOffset(22, 0),
+			Size = UDim2.new(1, -60, 1, 0),
+			Text = log.GroupName or "Ungrouped",
+			TextSize = 14,
+			TextTransparency = 0.1,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Parent = Header,
+		})
+
+		local CountLabel = Interface.New("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			Text = "x0",
+			TextSize = 14,
+			TextTransparency = 0.4,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Parent = Header,
+		})
+
+		local Children = Interface.New("Frame", {
+			BackgroundTransparency = 1,
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 0),
+			LayoutOrder = 1,
+			Parent = Root,
+
+			["UIListLayout"] = {
+				FillDirection = Enum.FillDirection.Vertical,
+				HorizontalAlignment = Enum.HorizontalAlignment.Left,
+				Padding = UDim.new(0, 4),
+			},
+
+			["UIPadding"] = { -- indent so children read as belonging to the header
+				PaddingLeft = UDim.new(0, 10),
+			},
+		})
+
+		local group = {
+			Key = key,
+			Root = Root,
+			Header = Header,
+			Chevron = Chevron,
+			CountLabel = CountLabel,
+			Children = Children,
+			Index = GroupOrder,
+			Logs = {},
+		}
+		Groups[key] = group
+
+		Header.MouseButton1Click:Connect(function()
+			SetCollapsed(group, not Collapsed[key])
+		end)
+
+		local Menu = ContextMenu:Create(Header, {
+			{
+				Text = "Ignore all in group",
+				Icon = "eye-off",
+				Callback = function()
+					for l in pairs(group.Logs) do
+						PromptSpy.SetIgnored(l, true)
+					end
+				end,
+			},
+			{
+				Text = "Show all in group",
+				Icon = "eye",
+				Callback = function()
+					for l in pairs(group.Logs) do
+						PromptSpy.SetIgnored(l, false)
+					end
+				end,
+			},
+			{
+				Text = "Clear group activations",
+				Icon = "trash",
+				Callback = function()
+					for l in pairs(group.Logs) do
+						PromptSpy.Clear(l)
+					end
+				end,
+			},
+		}, true)
+		Header.MouseButton2Click:Connect(Menu.Toggle)
+		Menu:BindLongPress(Header)
+
+		if Collapsed[key] then
+			SetCollapsed(group, true)
+		end
+		return group
+	end
+
 	--// Left-list buttons //-----------------------------------------------------------------------
 	local function RefreshButton(log)
 		local rec = Buttons[log]
@@ -472,16 +636,24 @@ return function(props: {
 		rec.Name.TextTransparency = dim and 0.55 or 0
 		rec.Count.TextTransparency = dim and 0.55 or 0.2
 		rec.Icon.ImageTransparency = dim and 0.6 or 0.15
+
+		local group = Groups[log.GroupKey or "__ungrouped"]
+		if group then
+			RefreshGroupCount(group)
+		end
 	end
 
 	local function CreateButton(log)
+		local group = EnsureGroup(log)
+		group.Logs[log] = true
+
 		local Root = Interface.New("TextButton", {
 			BackgroundColor3 = SELECTED,
 			BackgroundTransparency = 1,
 			LayoutOrder = log.Index or 1,
 			Size = UDim2.new(1, 0, 0, 30),
 			Text = "",
-			Parent = PromptList,
+			Parent = group.Children,
 
 			["UICorner"] = {
 				CornerRadius = UDim.new(0, 4),
@@ -590,6 +762,11 @@ return function(props: {
 					rec.Root:Destroy()
 				end
 				table.clear(Buttons)
+				for _, group in pairs(Groups) do
+					group.Root:Destroy()
+				end
+				table.clear(Groups)
+				GroupOrder = 0
 				PromptCount = 0
 				HeaderCount.Text = "0"
 				View.CurrentPrompt = nil

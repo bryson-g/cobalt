@@ -47,6 +47,51 @@ end
 
 local NextIndex = 0
 
+-- Container Models whose name carries no meaning — skip them when picking a group so we label the
+-- group with the actual object (Dryer / WashingMachine / Photocopier), not a generic wrapper.
+local GENERIC_MODEL_NAMES = { Model = true, Models = true, Parts = true, Meshes = true }
+
+-- Pick the node a prompt should be GROUPED under, so sibling prompts on the same object (a washer's
+-- Open/Close/Turn On/…) collapse into one row. Resolved AT TRIGGER TIME on purpose: games reparent
+-- prompts to nil once used, and once detached the ancestry is gone entirely (GetFullName then returns
+-- a bare "ProximityPrompt"), so resolving this lazily at render time would lose every group.
+--   1) nearest ancestor Model with a meaningful name  -> "Dryer", "Photocopier", "Mini Fridge"
+--   2) else the outermost container under the service -> "Office", "MorningBathroom"
+local function ResolveGroup(prompt): Instance?
+	local chain = {}
+	local node = prompt.Parent
+	while node and node ~= game do
+		chain[#chain + 1] = node
+		node = node.Parent
+	end
+	for _, ancestor in ipairs(chain) do
+		if ancestor.ClassName == "Model" and not GENERIC_MODEL_NAMES[ancestor.Name] then
+			return ancestor
+		end
+	end
+	-- chain ends at the service (Workspace); the entry before it is the top-level container
+	return chain[#chain - 1] or chain[#chain]
+end
+
+-- Stamp the group onto the log. Only resolves while the prompt is still parented, so retry on later
+-- activations if the first attempt came up empty.
+local function EnsureGroup(log, prompt)
+	if log.GroupKey then
+		return
+	end
+	local ok, node = pcall(ResolveGroup, prompt)
+	if not ok or not node then
+		return
+	end
+	local key
+	pcall(function()
+		key = node:GetFullName()
+	end)
+	log.GroupKey = key or node.Name
+	log.GroupName = node.Name
+	log.GroupClass = node.ClassName
+end
+
 --- Find or create the PromptLog for a ProximityPrompt instance. Applies any persisted ignore.
 function PromptSpy.EnsureLog(prompt)
 	local store = Store()
@@ -73,6 +118,7 @@ function PromptSpy.EnsureLog(prompt)
 		end
 	end
 
+	EnsureGroup(log, prompt)
 	store[prompt] = log
 	Notify("ensure", log, nil)
 	return log
@@ -117,6 +163,7 @@ local function OnTriggered(prompt, player)
 	end
 
 	local log = PromptSpy.EnsureLog(prompt)
+	EnsureGroup(log, prompt) -- retry if the first resolve came up empty (prompt still parented now)
 	if log.Ignored then
 		return -- ignored: keep the (greyed) list entry for un-ignoring, but drop the activation
 	end

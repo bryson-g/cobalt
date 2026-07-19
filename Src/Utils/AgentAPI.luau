@@ -504,10 +504,17 @@ function AgentAPI.GetPrompts(opts): { any }
 			end
 		end
 
+		-- Prefer the path captured at TRIGGER time: games reparent prompts to nil once used, and a
+		-- detached instance's GetFullName() collapses to a bare "ProximityPrompt" with no ancestry.
+		local latest = log.Activations[total]
+		local path = (latest and latest.path) or key
+
 		out[#out + 1] = {
-			prompt = key,
+			prompt = path,
 			name = name,
-			path = key,
+			path = path,
+			group = log.GroupName,
+			groupKey = log.GroupKey,
 			ignored = log.Ignored or false,
 			activationCount = total,
 			activations = activations,
