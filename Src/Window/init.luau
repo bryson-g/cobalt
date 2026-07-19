@@ -146,15 +146,43 @@ Window.Modals.Controller = ModalController.new(MainFrame, {
 	TweenInfo = Constants.DefaultTweenInfo,
 })
 
+--// View Roots \\--
+-- rh fork: two full-size transparent roots so Remotes and Prompts never share the same pane. Each
+-- child view keeps its original MainFrame-relative geometry (the roots match MainFrame exactly); the
+-- topbar switcher below just toggles which root is Visible. Active=false (default) so the transparent
+-- root never intercepts topbar clicks. ZIndex 0 keeps it under the topbar buttons.
+local RemotesRoot = Interface.New("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.fromScale(1, 1),
+	ZIndex = 0,
+	Parent = MainFrame,
+})
+local PromptsRoot = Interface.New("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.fromScale(1, 1),
+	ZIndex = 0,
+	Visible = false,
+	Parent = MainFrame,
+})
+
 --// Views \\--
 local LogsPage = require(script.Views.Logs)({
-	MainFrame = MainFrame,
+	MainFrame = RemotesRoot,
 	Window = Window,
 	ContextMenu = ContextMenus,
 	PaginationManager = PaginationManager,
 	GetDPIScale = GetDPIScale,
 })
 Window.Logs = LogsPage
+
+-- rh fork: the Prompts view (ProximityPrompt activity), fed live by Spy/PromptSpy.
+local PromptsView = require(script.Views.Prompts)({
+	MainFrame = PromptsRoot,
+	ContextMenu = ContextMenus,
+	PromptSpy = wax.shared.PromptSpy,
+	GetDPIScale = GetDPIScale,
+})
+Window.Prompts = PromptsView
 
 wax.shared.ClearLogs = LogsPage.ClearLogs
 wax.shared.GetCurrentLog = LogsPage.GetCurrentLog
@@ -202,12 +230,40 @@ PluginManager.AttachWindow({
 })
 
 --// Topbar \\--
-require(script.Components.Topbar)({
+local Topbar = require(script.Components.Topbar)({
 	MainFrame = MainFrame,
 	ShowButton = ShowButton,
 	CobaltLogo = CobaltLogo,
 	Modals = Window.Modals,
 	GetDPIScale = GetDPIScale,
 })
+
+--// View Switcher (Remotes | Prompts) \\--
+-- rh fork: top-level segmented switch centered in the topbar. Toggles the two view roots so the remote
+-- and prompt capture streams stay in separate panes.
+local CurrentMode = "Remotes"
+local Switcher = require(script.Components.ViewSwitcher)({
+	Parent = Topbar.TopBar,
+	Tabs = { "Remotes", "Prompts" },
+	OnSelected = function(Name)
+		CurrentMode = Name
+		RemotesRoot.Visible = Name == "Remotes"
+		PromptsRoot.Visible = Name == "Prompts"
+	end,
+})
+Switcher:Select("Remotes", true)
+Window.Switcher = Switcher
+
+-- rh fork: the topbar "clear" button clears whichever stream is in view.
+wax.shared.ClearActiveView = function()
+	if CurrentMode == "Prompts" then
+		PromptsView.ClearAll()
+	elseif wax.shared.ClearLogs then
+		pcall(wax.shared.ClearLogs)
+		if wax.shared.Sonner then
+			wax.shared.Sonner.success("Cleared captured calls")
+		end
+	end
+end
 
 return Window

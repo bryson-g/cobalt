@@ -222,6 +222,15 @@ return {
 		Schema = StringBoolMap,
 	}),
 
+	--// rh fork: persisted per-prompt ignore set ({ [promptPath] = true }) for the Prompts view. Kept
+	-- separate from PersistentIgnores (remotes) so the two streams don't cross. Managed by PromptSpy +
+	-- getgenv().CobaltAgent (IgnorePrompt/ShowPrompt). Saved to Cobalt/Settings.json.
+	PromptIgnores = Setting.new({
+		Key = "PromptIgnores",
+		Default = {},
+		Schema = StringBoolMap,
+	}),
+
 	--// File Logging Section \\--
 	-- rh fork: default OFF. The compact JSON export (CobaltAgent.ExportLogs) is the agent-facing
 	-- capture; the giant .log files are opt-in (heavy disk I/O every remote). Turn on from Settings

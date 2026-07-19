@@ -28,11 +28,13 @@ return function(props: {
 		Constants.MainUICorner,
 		Parent = MainFrame,
 
+		-- rh fork: left-aligned title (next to the logo) so the centered Remotes/Prompts switcher has room.
 		["TextLabel"] = {
 			Text = "Cobalt (fork)",
-			TextSize = 18,
-			Position = UDim2.fromOffset(0, 1),
-			Size = UDim2.new(1, 0, 1, -1),
+			TextSize = 16,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Position = UDim2.fromOffset(34, 1),
+			Size = UDim2.new(0, 150, 1, -1),
 		},
 
 		["ImageLabel"] = {
@@ -165,14 +167,17 @@ return function(props: {
 		return (Left.Order or 0) < (Right.Order or 0)
 	end)
 
-	-- rh fork: quick "clear captured calls" button so you can reset the view to a clean slate
-	-- without digging into Settings. Clears all logs + refreshes the list (wax.shared.ClearLogs).
+	-- rh fork: quick "clear" button so you can reset the view to a clean slate without digging into
+	-- Settings. Clears whichever stream is in view (Remotes or Prompts) via wax.shared.ClearActiveView,
+	-- falling back to clearing remote logs if the switcher isn't wired yet.
 	table.insert(TopButtonData, {
 		Type = "Button",
 		Icon = "trash",
 		Order = 9998,
 		Callback = function()
-			if wax.shared.ClearLogs then
+			if wax.shared.ClearActiveView then
+				pcall(wax.shared.ClearActiveView)
+			elseif wax.shared.ClearLogs then
 				pcall(wax.shared.ClearLogs)
 				if wax.shared.Sonner then
 					wax.shared.Sonner.success("Cleared captured calls")

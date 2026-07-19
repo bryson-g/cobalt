@@ -288,6 +288,15 @@ wax.shared.Unload = function()
 	table.clear(wax.shared.Logs)
 	table.clear(wax.shared.IncomingLogConnectionFunctions)
 
+	-- rh fork: drop captured prompt activity (the PromptTriggered connection is in wax.shared.Connections
+	-- above, so it's already disconnected by the loop that clears them).
+	if wax.shared.PromptLogs then
+		for _, PromptLog in pairs(wax.shared.PromptLogs) do
+			table.clear(PromptLog.Activations)
+		end
+		table.clear(wax.shared.PromptLogs)
+	end
+
 	getgenv().CobaltInitialized = false
 	getgenv().Cobalt = nil
 
@@ -471,6 +480,13 @@ wax.shared.Logs = {
 
 -- rh fork: Agent API (persistent ignore + machine-readable export + programmatic control).
 wax.shared.AgentAPI = require(script.Utils.AgentAPI)
+
+-- rh fork: ProximityPrompt capture — a SEPARATE stream from the remote spy (prompts don't go through
+-- RemoteEvents, so the remote hooks never see them). Store keyed by prompt instance; the hook is
+-- started here so it captures from load, and the Prompts view (created in Window) subscribes to it.
+wax.shared.PromptLogs = {}
+wax.shared.PromptSpy = require(script.Spy.PromptSpy)
+wax.shared.PromptSpy.Start()
 
 wax.shared.NewLog = function(Instance, Type, CallingScript)
 	local Log = wax.shared.Log.new(Instance, Type, wax.shared.GetTableLength(wax.shared.Logs[Type]) + 1, CallingScript)

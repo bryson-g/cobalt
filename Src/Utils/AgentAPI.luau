@@ -344,6 +344,230 @@ function AgentAPI.SetFarmDefaults(): number
 	return added
 end
 
+--// Proximity-prompt capture (separate stream) ////////////////////////////////////////////////////
+-- Prompts are captured by Spy/PromptSpy into wax.shared.PromptLogs (keyed by prompt instance). Ignore
+-- persists under its own key so it's independent of the remote ignore set. Query/export mirror the
+-- remote GetLogs/ExportLogs so the agent can pull prompt activity as JSON too.
+
+local PROMPT_IGNORE_KEY = "PromptIgnores"
+
+local function LoadPromptIgnores(): { [string]: boolean }
+	local set = SaveManager():GetState(PROMPT_IGNORE_KEY)
+	if type(set) ~= "table" then
+		return {}
+	end
+	return set
+end
+
+local function StorePromptIgnores(set: { [string]: boolean })
+	pcall(function()
+		SaveManager():SetState(PROMPT_IGNORE_KEY, set)
+	end)
+end
+
+function AgentAPI.IsPromptIgnored(instance): boolean
+	return LoadPromptIgnores()[RemoteKey(instance)] == true
+end
+
+function AgentAPI.SetPromptIgnored(instance, ignored: boolean)
+	local set = LoadPromptIgnores()
+	local key = RemoteKey(instance)
+	if ignored then
+		set[key] = true
+	else
+		set[key] = nil
+	end
+	StorePromptIgnores(set)
+end
+
+-- Best-effort display name for a prompt (ActionText, else instance name).
+local function PromptName(instance): string
+	local name
+	pcall(function()
+		name = instance.ActionText
+	end)
+	if not name or name == "" then
+		name = instance.Name
+	end
+	return name
+end
+
+-- Live PromptLogs whose prompt matches a name (ActionText/Name) or full path substring.
+local function MatchingPromptLogs(nameOrPath: string)
+	local out = {}
+	for instance, log in pairs(wax.shared.PromptLogs or {}) do
+		if typeof(instance) == "Instance" then
+			local key = RemoteKey(instance)
+			if
+				PromptName(instance) == nameOrPath
+				or instance.Name == nameOrPath
+				or key == nameOrPath
+				or string.find(key, nameOrPath, 1, true)
+			then
+				out[#out + 1] = log
+			end
+		end
+	end
+	return out
+end
+
+-- Ignore a prompt by name or full path. Persists + applies to live PromptLogs. Returns matches.
+function AgentAPI.IgnorePrompt(nameOrPath: string): number
+	local set = LoadPromptIgnores()
+	local matched = 0
+	for _, log in ipairs(MatchingPromptLogs(nameOrPath)) do
+		log.Ignored = true
+		set[RemoteKey(log.Instance)] = true
+		matched += 1
+	end
+	if matched == 0 then
+		set[nameOrPath] = true
+	end
+	StorePromptIgnores(set)
+	return matched
+end
+
+-- Un-ignore (show) a prompt by name or path. Persists the removal.
+function AgentAPI.ShowPrompt(nameOrPath: string): number
+	local set = LoadPromptIgnores()
+	local matched = 0
+	for _, log in ipairs(MatchingPromptLogs(nameOrPath)) do
+		log.Ignored = false
+		set[RemoteKey(log.Instance)] = nil
+		matched += 1
+	end
+	set[nameOrPath] = nil
+	StorePromptIgnores(set)
+	return matched
+end
+
+-- The full persisted prompt-ignore list (keys), sorted.
+function AgentAPI.ListIgnoredPrompts(): { string }
+	local out = {}
+	for key in pairs(LoadPromptIgnores()) do
+		out[#out + 1] = key
+	end
+	table.sort(out)
+	return out
+end
+
+-- Query captured prompt activity as a plain table (the agent-facing "query prompts" interface). Opts:
+--   name                    substring match on the prompt name (ActionText/Name) OR full path
+--   minActivations          only prompts with >= this many activations
+--   includeIgnored          default true; set false to hide ignored prompts
+--   includeActivations      default true; set false for a name/count-only listing
+--   maxActivationsPerPrompt cap activations returned per prompt (newest first), default 40
+--   limit                   cap prompts returned (after sorting by activation count desc)
+function AgentAPI.GetPrompts(opts): { any }
+	opts = opts or {}
+	local maxActs = opts.maxActivationsPerPrompt or 40
+	local nameFilter = opts.name and string.lower(opts.name) or nil
+	local out = {}
+	for instance, log in pairs(wax.shared.PromptLogs or {}) do
+		if typeof(instance) ~= "Instance" then
+			continue
+		end
+		if opts.includeIgnored == false and log.Ignored then
+			continue
+		end
+		local total = #log.Activations
+		if opts.minActivations and total < opts.minActivations then
+			continue
+		end
+		local key = RemoteKey(instance)
+		local name = PromptName(instance)
+		if
+			nameFilter
+			and not (
+				string.find(string.lower(name), nameFilter, 1, true)
+				or string.find(string.lower(key), nameFilter, 1, true)
+			)
+		then
+			continue
+		end
+
+		local activations = {}
+		if opts.includeActivations ~= false then
+			local startIndex = math.max(1, total - maxActs + 1)
+			for i = startIndex, total do
+				local a = log.Activations[i]
+				activations[#activations + 1] = {
+					index = i,
+					time = a.time,
+					actionText = a.actionText,
+					objectText = a.objectText,
+					holdDuration = a.holdDuration,
+					maxDistance = a.maxDistance,
+					keyCode = a.keyCode,
+					path = a.path,
+				}
+			end
+		end
+
+		out[#out + 1] = {
+			prompt = key,
+			name = name,
+			path = key,
+			ignored = log.Ignored or false,
+			activationCount = total,
+			activations = activations,
+		}
+	end
+
+	table.sort(out, function(a, b)
+		return a.activationCount > b.activationCount
+	end)
+	if opts.limit and #out > opts.limit then
+		local trimmed = {}
+		for i = 1, opts.limit do
+			trimmed[i] = out[i]
+		end
+		return trimmed
+	end
+	return out
+end
+
+-- Write a prompt-activity snapshot to Cobalt/Export/*.json. Returns (path, promptCount).
+function AgentAPI.ExportPrompts(fileName: string?, opts): (string?, number)
+	local snapshot = AgentAPI.GetPrompts(opts)
+	local ok, json = pcall(function()
+		return wax.shared.HttpService:JSONEncode({
+			exportedAt = os.time(),
+			executor = wax.shared.ExecutorName,
+			promptCount = #snapshot,
+			prompts = snapshot,
+		})
+	end)
+	if not ok then
+		return nil, 0
+	end
+	local name = fileName or ("cobalt-prompts-" .. os.time() .. ".json")
+	local helper = FileHelper.new("Cobalt/Export")
+	local written = pcall(function()
+		helper:WriteFile(name, json)
+	end)
+	if not written then
+		return nil, #snapshot
+	end
+	return "Cobalt/Export/" .. name, #snapshot
+end
+
+-- Clear captured prompt activity (all, or a specific prompt by name/path).
+function AgentAPI.ClearPrompts(nameOrPath: string?)
+	local PromptSpy = wax.shared.PromptSpy
+	if not PromptSpy then
+		return false
+	end
+	if nameOrPath then
+		for _, log in ipairs(MatchingPromptLogs(nameOrPath)) do
+			pcall(PromptSpy.Clear, log)
+		end
+	else
+		pcall(PromptSpy.Clear, nil)
+	end
+	return true
+end
+
 -- Clear the captured-call view (all remotes, or a specific instance/direction). Refreshes the UI.
 function AgentAPI.ClearLogs(instance, direction)
 	if wax.shared.ClearLogs then
