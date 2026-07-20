@@ -1104,68 +1104,90 @@ return function(props: {
 	-- Bounded on purpose: the DataModel can hold tens of thousands of instances, and an unbounded
 	-- walk would hang the client. We stop at either cap and say so rather than pretending the result
 	-- is complete.
-	local MAX_SCAN = 20000
-	local MAX_MATCHES = 200
+	-- A real game's DataModel runs to hundreds of thousands of instances, so a single-pass walk either
+	-- misses things (if capped low) or freezes the client (if not). This yields every few thousand
+	-- nodes instead: the cap stays high enough to actually reach everything, and a newer search
+	-- supersedes an in-flight one via the token.
+	local MAX_SCAN = 250000
+	local MAX_MATCHES = 300
+	local YIELD_EVERY = 3000
+	local SearchRunToken = 0
 
 	local function RunSearch(query: string)
 		query = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		SearchRunToken += 1
+		local token = SearchRunToken
+
 		if query == "" then
 			SearchVisible, SearchMatches = nil, nil
 			RenderTree()
 			return
 		end
 
-		local needle = query:lower()
-		local visible, matches = {}, {}
-		local scanned, found = 0, 0
-		local hitCap = false
+		task.spawn(function()
+			local needle = query:lower()
+			local visible, matches = {}, {}
+			local scanned, found = 0, 0
+			local hitCap, superseded = false, false
 
-		local function markAncestors(instance)
-			local node = instance
-			while node and node ~= game do
-				visible[node] = true
-				node = node.Parent
-			end
-		end
-
-		local function walk(instance)
-			if scanned >= MAX_SCAN or found >= MAX_MATCHES then
-				hitCap = true
-				return
-			end
-			for _, child in ipairs(ChildrenOf(instance)) do
-				scanned += 1
-				if scanned >= MAX_SCAN or found >= MAX_MATCHES then
-					hitCap = true
-					return
+			local function markAncestors(instance)
+				local node = instance
+				while node and node ~= game do
+					visible[node] = true
+					node = node.Parent
 				end
-				local ok = pcall(function()
-					if
-						string.find(child.Name:lower(), needle, 1, true)
-						or string.find(child.ClassName:lower(), needle, 1, true)
-					then
-						matches[child] = true
-						found += 1
-						markAncestors(child)
+			end
+
+			local function walk(instance)
+				for _, child in ipairs(ChildrenOf(instance)) do
+					if SearchRunToken ~= token then
+						superseded = true
+						return
 					end
-				end)
-				if ok then
-					walk(child)
+					scanned += 1
+					if scanned >= MAX_SCAN or found >= MAX_MATCHES then
+						hitCap = true
+						return
+					end
+					if scanned % YIELD_EVERY == 0 then
+						task.wait() -- keep the client responsive on a huge tree
+					end
+
+					local ok = pcall(function()
+						if
+							string.find(child.Name:lower(), needle, 1, true)
+							or string.find(child.ClassName:lower(), needle, 1, true)
+						then
+							matches[child] = true
+							found += 1
+							markAncestors(child)
+						end
+					end)
+					if ok then
+						walk(child)
+						if superseded or hitCap then
+							return
+						end
+					end
 				end
 			end
-		end
 
-		walk(game)
-		SearchVisible, SearchMatches = visible, matches
-		RenderTree()
-
-		if wax.shared.Sonner then
-			if found == 0 then
-				wax.shared.Sonner.info(("No instances matching %q"):format(query))
-			elseif hitCap then
-				wax.shared.Sonner.warning(("%d+ matches (search capped) — narrow the term"):format(found))
+			walk(game)
+			if superseded or SearchRunToken ~= token then
+				return -- a newer query started while we were walking
 			end
-		end
+
+			SearchVisible, SearchMatches = visible, matches
+			RenderTree()
+
+			if wax.shared.Sonner then
+				if found == 0 then
+					wax.shared.Sonner.info(("No instances matching %q"):format(query))
+				elseif hitCap then
+					wax.shared.Sonner.warning(("Showing first %d matches — narrow the term"):format(found))
+				end
+			end
+		end)
 	end
 
 	-- Debounced so typing doesn't kick off a full-tree walk per keystroke; clearing resets instantly.
