@@ -151,6 +151,12 @@ return function(props: {
 	local SelectedRow = nil
 	local FlatRows = {} -- current render order, for scroll-to-reveal
 
+	-- Filter state. SearchVisible is the set of nodes to draw while filtering (matches AND their
+	-- ancestors, so a hit is shown in context); SearchMatches is just the hits, for highlighting.
+	-- Both nil when not filtering, which restores the normal expand/collapse tree untouched.
+	local SearchVisible, SearchMatches = nil, nil
+	local MATCH_YELLOW = Color3.fromRGB(235, 200, 110)
+
 	--// Left: explorer tree //---------------------------------------------------------------------
 	local LeftList = Interface.New("Frame", {
 		BackgroundTransparency = 1,
@@ -206,11 +212,28 @@ return function(props: {
 		Parent = Header,
 	})
 
+	-- Filter box. Matching is over Name and ClassName; matches are shown with their ancestor chain so
+	-- you still see where each hit lives.
+	local SearchBox = Interface.New("TextBox", {
+		BackgroundColor3 = BG_INNER,
+		Position = UDim2.fromOffset(0, 36),
+		Size = UDim2.new(1, 0, 0, 24),
+		Text = "",
+		PlaceholderText = "Search name or class…",
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		Parent = LeftList,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+		["UIPadding"] = { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) },
+	})
+
 	local TreeWrapper = Interface.New("Frame", {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundColor3 = BG,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -36),
+		Size = UDim2.new(1, 0, 1, -66), -- header (30) + search (24) + gaps
 		Parent = LeftList,
 
 		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
@@ -903,11 +926,15 @@ return function(props: {
 		})
 		Icons.SetIcon(Icon, IconFor(instance))
 
+		local isMatch = SearchMatches ~= nil and SearchMatches[instance] == true
 		Interface.New("TextLabel", {
 			Position = UDim2.new(0, x + 34, 0, 0),
 			Size = UDim2.new(1, -(x + 38), 1, 0),
 			Text = instance.Name,
 			TextSize = 14,
+			-- while filtering, tint actual hits so they stand out from the ancestor rows drawn for context
+			TextColor3 = isMatch and MATCH_YELLOW or Color3.new(1, 1, 1),
+			TextTransparency = (SearchMatches ~= nil and not isMatch) and 0.35 or 0,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
 			Parent = RowButton,
@@ -1003,13 +1030,18 @@ return function(props: {
 			FlatRows[order] = entry
 			MakeRow(entry, order)
 
-			if Expanded[instance] then
-				for index, child in ipairs(children) do
-					if index > MAX_CHILDREN_PER_NODE then
-						truncated = true
-						break
+			-- while filtering, the path to every hit is force-expanded; otherwise honour the toggles
+			if Expanded[instance] or SearchVisible ~= nil then
+				local rendered = 0
+				for _, child in ipairs(children) do
+					if SearchVisible == nil or SearchVisible[child] then
+						rendered += 1
+						if rendered > MAX_CHILDREN_PER_NODE then
+							truncated = true
+							break
+						end
+						walk(child, depth + 1)
 					end
-					walk(child, depth + 1)
 				end
 			end
 		end
@@ -1067,6 +1099,91 @@ return function(props: {
 		SelectInstance(instance, true)
 		ScrollToSelected()
 	end
+
+	--// Search //---------------------------------------------------------------------------------
+	-- Bounded on purpose: the DataModel can hold tens of thousands of instances, and an unbounded
+	-- walk would hang the client. We stop at either cap and say so rather than pretending the result
+	-- is complete.
+	local MAX_SCAN = 20000
+	local MAX_MATCHES = 200
+
+	local function RunSearch(query: string)
+		query = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if query == "" then
+			SearchVisible, SearchMatches = nil, nil
+			RenderTree()
+			return
+		end
+
+		local needle = query:lower()
+		local visible, matches = {}, {}
+		local scanned, found = 0, 0
+		local hitCap = false
+
+		local function markAncestors(instance)
+			local node = instance
+			while node and node ~= game do
+				visible[node] = true
+				node = node.Parent
+			end
+		end
+
+		local function walk(instance)
+			if scanned >= MAX_SCAN or found >= MAX_MATCHES then
+				hitCap = true
+				return
+			end
+			for _, child in ipairs(ChildrenOf(instance)) do
+				scanned += 1
+				if scanned >= MAX_SCAN or found >= MAX_MATCHES then
+					hitCap = true
+					return
+				end
+				local ok = pcall(function()
+					if
+						string.find(child.Name:lower(), needle, 1, true)
+						or string.find(child.ClassName:lower(), needle, 1, true)
+					then
+						matches[child] = true
+						found += 1
+						markAncestors(child)
+					end
+				end)
+				if ok then
+					walk(child)
+				end
+			end
+		end
+
+		walk(game)
+		SearchVisible, SearchMatches = visible, matches
+		RenderTree()
+
+		if wax.shared.Sonner then
+			if found == 0 then
+				wax.shared.Sonner.info(("No instances matching %q"):format(query))
+			elseif hitCap then
+				wax.shared.Sonner.warning(("%d+ matches (search capped) — narrow the term"):format(found))
+			end
+		end
+	end
+
+	-- Debounced so typing doesn't kick off a full-tree walk per keystroke; clearing resets instantly.
+	local SearchToken = 0
+	SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		SearchToken += 1
+		local token = SearchToken
+		local text = SearchBox.Text
+		if text == "" then
+			RunSearch("")
+			return
+		end
+		task.delay(0.35, function()
+			if SearchToken == token then
+				RunSearch(text)
+			end
+		end)
+	end)
 
 	RefreshLabel.MouseButton1Click:Connect(function()
 		RenderTree()
