@@ -224,7 +224,9 @@ function Recorder.LoadSaved(): number
 		local name = tostring(file)
 		if name:sub(-5) == ".json" then
 			pcall(function()
-				local raw = helper:ReadRawFile(name)
+				-- ListFiles yields paths RELATIVE to the helper's base, so read them through
+				-- ReadFile (which re-prepends it), not ReadRawFile (which expects a full path).
+				local raw = helper:ReadFile(name)
 				local data = wax.shared.HttpService:JSONDecode(raw)
 				if type(data) ~= "table" or not data.id then
 					return
