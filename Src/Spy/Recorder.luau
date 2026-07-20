@@ -130,6 +130,10 @@ function Recorder.SessionToTable(session, opts)
 		endedAt = session.EndedAt,
 		duration = (session.EndedAt or os.time()) - session.StartedAt,
 		recording = session.EndedAt == nil,
+		saved = session.Saved == true,
+		-- restored = loaded from disk, so its events hold serialised args revived at playback rather
+		-- than the original call tables; fidelity is lower than a session recorded this injection.
+		restored = session.Restored == true,
 		eventCount = #session.Events,
 		events = events,
 	}
