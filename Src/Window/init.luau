@@ -261,12 +261,12 @@ local Topbar = require(script.Components.Topbar)({
 local CurrentMode = "Remotes"
 local Switcher = require(script.Components.ViewSwitcher)({
 	Parent = Topbar.TopBar,
-	Tabs = { "Remotes", "Prompts", "Inspection" },
+	Tabs = { "Remotes", "Prompts", "Inspect" },
 	OnSelected = function(Name)
 		CurrentMode = Name
 		RemotesRoot.Visible = Name == "Remotes"
 		PromptsRoot.Visible = Name == "Prompts"
-		InspectionRoot.Visible = Name == "Inspection"
+		InspectionRoot.Visible = Name == "Inspect"
 	end,
 })
 Switcher:Select("Remotes", true)
