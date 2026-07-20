@@ -152,11 +152,55 @@ return function(props: {
 		Parent = RightWrap,
 	})
 
-	local Toolbar = Interface.New("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 26),
-		Size = UDim2.new(1, 0, 0, 24),
+	-- Controls panel. Two labelled rows: nothing here is a bare number you have to guess at — the
+	-- interval says what unit it is, the repeat button says what it does, and the floor is stated.
+	local Controls = Interface.New("Frame", {
+		BackgroundColor3 = BG,
+		Position = UDim2.fromOffset(0, 24),
+		Size = UDim2.new(1, 0, 0, 62),
+		Visible = false,
 		Parent = RightWrap,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+		["UIPadding"] = {
+			PaddingLeft = UDim.new(0, 8),
+			PaddingRight = UDim.new(0, 8),
+			PaddingTop = UDim.new(0, 7),
+			PaddingBottom = UDim.new(0, 7),
+		},
+	})
+
+	local function Caption(parent, text: string, order: number, dim: number?)
+		return Interface.New("TextLabel", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 22),
+			LayoutOrder = order,
+			Text = text,
+			TextSize = 13,
+			TextTransparency = dim or 0.35,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = parent,
+		})
+	end
+
+	local function ToolButton(parent, text: string, order: number, colour: Color3?)
+		return Interface.New("TextButton", {
+			BackgroundColor3 = colour or Color3.fromRGB(45, 45, 45),
+			Size = UDim2.fromOffset(#text * 7 + 18, 22),
+			LayoutOrder = order,
+			Text = text,
+			TextSize = 13,
+			Parent = parent,
+
+			["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+		})
+	end
+
+	--// Row 1: one-shot actions \\--
+	local ActionRow = Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 22),
+		Parent = Controls,
 
 		["UIListLayout"] = {
 			FillDirection = Enum.FillDirection.Horizontal,
@@ -166,55 +210,72 @@ return function(props: {
 		},
 	})
 
-	local function ToolButton(text: string, order: number, colour: Color3?)
-		return Interface.New("TextButton", {
-			BackgroundColor3 = colour or Color3.fromRGB(45, 45, 45),
-			Size = UDim2.fromOffset(#text * 7 + 16, 22),
-			LayoutOrder = order,
-			Text = text,
-			TextSize = 13,
-			Visible = false,
-			Parent = Toolbar,
+	local FireButton = ToolButton(ActionRow, "▶ Fire once", 1, FIRE_GREEN)
+	local ResetButton = ToolButton(ActionRow, "Reset args", 2)
+	local RemoveButton = ToolButton(ActionRow, "Remove", 3)
 
-			["UICorner"] = { CornerRadius = UDim.new(0, 4) },
-		})
-	end
+	local StatusLabel = Interface.New("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.new(0, 170, 0, 22),
+		Text = "",
+		TextSize = 12,
+		TextTransparency = 0.35,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = Controls,
+	})
 
-	local FireButton = ToolButton("▶ Fire", 1, FIRE_GREEN)
-	local LoopButton = ToolButton("Loop", 2)
-	local ResetButton = ToolButton("Reset", 3)
-	local RemoveButton = ToolButton("Remove", 4)
+	--// Row 2: the looper, spelled out \\--
+	local RepeatRow = Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 26),
+		Size = UDim2.new(1, 0, 0, 22),
+		Parent = Controls,
+
+		["UIListLayout"] = {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Left,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 6),
+		},
+	})
+
+	Caption(RepeatRow, "Repeat every", 1)
 
 	local IntervalBox = Interface.New("TextBox", {
 		BackgroundColor3 = BG_INNER,
-		Size = UDim2.fromOffset(54, 22),
-		LayoutOrder = 5,
+		Size = UDim2.fromOffset(46, 22),
+		LayoutOrder = 2,
 		Text = "1.0",
-		PlaceholderText = "sec",
+		PlaceholderText = "1.0",
 		TextSize = 13,
 		ClearTextOnFocus = false,
-		Visible = false,
-		Parent = Toolbar,
+		Parent = RepeatRow,
 
 		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 	})
 
-	local StatusLabel = Interface.New("TextLabel", {
-		Text = "",
-		TextSize = 12,
-		TextTransparency = 0.35,
-		Size = UDim2.new(0, 190, 1, 0),
-		LayoutOrder = 6,
+	Caption(RepeatRow, "seconds", 3)
+	local LoopButton = ToolButton(RepeatRow, "▶ Start repeating", 4)
+	Caption(RepeatRow, ("(minimum %ss)"):format(MIN_INTERVAL), 5, 0.55)
+
+	local ArgsHeader = Interface.New("TextLabel", {
+		Position = UDim2.fromOffset(2, 90),
+		Size = UDim2.new(1, 0, 0, 16),
+		Text = "Arguments",
+		TextSize = 13,
+		TextTransparency = 0.45,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = Toolbar,
+		Visible = false,
+		Parent = RightWrap,
 	})
 
 	local ArgsList = Interface.New("ScrollingFrame", {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -56),
+		Size = UDim2.new(1, 0, 1, -110),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		ScrollBarThickness = 2,
@@ -240,7 +301,7 @@ return function(props: {
 			LoopHandle.Stopped = true
 			LoopHandle = nil
 		end
-		LoopButton.Text = "Loop"
+		LoopButton.Text = "▶ Start repeating"
 		LoopButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 	end
 
@@ -255,7 +316,12 @@ return function(props: {
 		if ok then
 			entry.Fired = (entry.Fired or 0) + 1
 		end
-		return ok, ok and nil or tostring(err)
+		-- NOT `ok and nil or tostring(err)` — nil is falsy, so that always falls through and reports
+		-- the string "nil" as the error on every success.
+		if ok then
+			return true, nil
+		end
+		return false, tostring(err)
 	end
 
 	local RenderArgs -- forward declaration; the editors re-render after each commit
@@ -265,18 +331,17 @@ return function(props: {
 			StatusLabel.Text = ""
 			return
 		end
-		StatusLabel.Text = ("fired %d%s"):format(entry.Fired or 0, entry.LastError and (" · " .. entry.LastError) or "")
+		local fired = entry.Fired or 0
+		StatusLabel.Text = entry.LastError and ("failed: " .. entry.LastError)
+			or (fired == 0 and "not fired yet" or ("fired %d time%s"):format(fired, fired == 1 and "" or "s"))
 		StatusLabel.TextColor3 = entry.LastError and Color3.fromRGB(230, 110, 110) or Color3.new(1, 1, 1)
 	end
 
 	--// Bench //-----------------------------------------------------------------------------------
 	local function RefreshToolbar()
 		local has = View.Selected ~= nil
-		FireButton.Visible = has
-		LoopButton.Visible = has
-		ResetButton.Visible = has
-		RemoveButton.Visible = has
-		IntervalBox.Visible = has
+		Controls.Visible = has
+		ArgsHeader.Visible = has
 		TitleLabel.Text = has and ("%s  ·  %s"):format(View.Selected.Name, View.Selected.Path)
 			or "Select something on the bench"
 		UpdateStatus(View.Selected)
@@ -512,7 +577,7 @@ return function(props: {
 
 		local handle = { Stopped = false }
 		LoopHandle = handle
-		LoopButton.Text = "■ Stop"
+		LoopButton.Text = "■ Stop repeating"
 		LoopButton.BackgroundColor3 = STOP_RED
 
 		task.spawn(function()
