@@ -616,6 +616,13 @@ return function(props: {
 		end)
 	end
 
+	-- Select an instance, expand its ancestors, and scroll it into view. This is exactly what a world
+	-- pick does, exposed so it can be driven programmatically (bridge/plugins) too.
+	function View.Reveal(instance)
+		SelectInstance(instance, true)
+		ScrollToSelected()
+	end
+
 	RefreshLabel.MouseButton1Click:Connect(function()
 		RenderTree()
 	end)
@@ -692,8 +699,7 @@ return function(props: {
 		end
 
 		SetArmed(false)
-		SelectInstance(target, true)
-		ScrollToSelected()
+		View.Reveal(target)
 		if props.OnPicked then
 			pcall(props.OnPicked, target) -- bring the Inspect tab forward so the pick is actually visible
 		end

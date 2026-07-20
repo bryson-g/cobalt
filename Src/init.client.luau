@@ -499,6 +499,8 @@ wax.shared.NewLog = function(Instance, Type, CallingScript)
 end
 
 local Window = require(script.Window)
+-- rh fork: expose the window so the agent/bridge can drive the UI (e.g. Window.Inspection.Reveal(inst)).
+wax.shared.Window = Window
 if not wax.shared.IsOutgoingLoggable and not wax.shared.SaveManager:GetState("LimitedLoggingAcknowledged") then
 	Window.Dialogs.LoggingDisabled.Open(Window)
 end
