@@ -281,19 +281,51 @@ return function(props: {
 				end
 				if wax.shared.AgentAPI and Instance then
 					pcall(wax.shared.AgentAPI.SetIgnored, Instance, false)
+					-- rh fork: also sync the actor VMs, so un-ignoring here lands everywhere the
+					-- ignore did (this is the one place the decision gets undone).
+					pcall(wax.shared.AgentAPI.SyncIgnoreState, Live or RemoteData, false)
 				end
 			end,
 		})
 
 		-- rh fork: surface remotes that are already ignored (restored from Cobalt/Settings.json this
 		-- session) so the operator can see + toggle the persisted set, not just ones ignored just now.
+		-- Add the LOG ITSELF — the list removes by identity, so a lookalike table can never be removed.
 		for _, Category in pairs(wax.shared.Logs or {}) do
 			for Instance, Log in pairs(Category) do
 				if Log.Ignored and typeof(Instance) == "Instance" then
 					pcall(function()
-						IgnoredList:AddToList({ Instance = Instance, Type = Log.Type })
+						if not table.find(IgnoredList.Value, Log) then
+							IgnoredList:AddToList(Log)
+						end
 					end)
 				end
+			end
+		end
+	end
+
+	--// rh fork: Ignored Prompts \\--
+	-- Same contract as remotes: ignoring anywhere is global, and Settings is where it's undone.
+	local IgnoredPromptsSection = MainSettings:CreateSection("Ignored Prompts")
+	do
+		local IgnoredPrompts = IgnoredPromptsSection:CreateRemoteList("IgnoredPrompts", {
+			NullMessage = "No prompts have been ignored yet.",
+			Callback = function(PromptData)
+				if wax.shared.PromptSpy then
+					pcall(wax.shared.PromptSpy.SetIgnored, PromptData, false)
+				elseif wax.shared.AgentAPI and PromptData.Instance then
+					pcall(wax.shared.AgentAPI.SetPromptIgnored, PromptData.Instance, false)
+				end
+			end,
+		})
+
+		for _, Log in pairs(wax.shared.PromptLogs or {}) do
+			if Log.Ignored and typeof(Log.Instance) == "Instance" then
+				pcall(function()
+					if not table.find(IgnoredPrompts.Value, Log) then
+						IgnoredPrompts:AddToList(Log)
+					end
+				end)
 			end
 		end
 	end

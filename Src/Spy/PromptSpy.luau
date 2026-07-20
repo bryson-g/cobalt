@@ -46,6 +46,7 @@ local function Notify(kind, promptLog, activation)
 end
 
 local NextIndex = 0
+local SyncIgnoreUI -- defined below; EnsureLog calls it when restoring a persisted ignore
 
 -- Container Models whose name carries no meaning — skip them when picking a group so we label the
 -- group with the actual object (Dryer / WashingMachine / Photocopier), not a generic wrapper.
@@ -122,6 +123,7 @@ function PromptSpy.EnsureLog(prompt)
 	NextIndex += 1
 	log = {
 		Instance = prompt,
+		Type = "Prompt", -- lets the shared Settings list render this like a remote entry
 		Index = NextIndex,
 		Activations = {},
 		Ignored = false,
@@ -134,6 +136,7 @@ function PromptSpy.EnsureLog(prompt)
 		local ok, ignored = pcall(AgentAPI.IsPromptIgnored, prompt)
 		if ok and ignored then
 			log.Ignored = true
+			SyncIgnoreUI(log) -- surface a restored ignore in Settings too
 		end
 	end
 
@@ -269,6 +272,26 @@ local function OnTriggered(prompt, player)
 	Notify("activation", log, snap)
 end
 
+-- Mirror the decision into Settings > Ignored Prompts, so ignoring from anywhere is undoable there.
+-- The list removes by identity, so the entry must be the log itself.
+SyncIgnoreUI = function(log)
+	local list = wax.shared.Settings and wax.shared.Settings["IgnoredPrompts"]
+	if not list or type(list.Value) ~= "table" then
+		return
+	end
+	local present = table.find(list.Value, log) ~= nil
+	if log.Ignored and not present then
+		pcall(function()
+			list:AddToList(log)
+		end)
+	elseif not log.Ignored and present then
+		pcall(function()
+			list:RemoveFromList(log)
+		end)
+	end
+end
+PromptSpy.SyncIgnoreUI = SyncIgnoreUI
+
 --- Toggle a prompt's ignore state (persists via AgentAPI, like the remote ignore set).
 function PromptSpy.SetIgnored(log, ignored)
 	if not log then
@@ -280,6 +303,7 @@ function PromptSpy.SetIgnored(log, ignored)
 	if AgentAPI and AgentAPI.SetPromptIgnored then
 		pcall(AgentAPI.SetPromptIgnored, log.Instance, log.Ignored)
 	end
+	SyncIgnoreUI(log)
 	Notify("ignore", log, nil)
 end
 

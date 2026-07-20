@@ -216,7 +216,7 @@ return function(props: {
 		Parent = Toolbar,
 	})
 
-	-- Direction filter for the feed. Combined is the default so nothing is hidden until asked.
+	-- Direction filter for the feed. All is the default so nothing is hidden until asked.
 	local FilterRow = Interface.New("Frame", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(0, 56),
@@ -251,13 +251,13 @@ return function(props: {
 	--// Rendering //--------------------------------------------------------------------------------
 	local MAX_EVENT_ROWS = 300
 
-	local Filter = "Combined" -- "Combined" | "Outgoing" | "Incoming"
+	local Filter = "All" -- "All" | "Outgoing" | "Incoming"
 
 	-- Prompts and seats have no remote direction, but they ARE client-originated actions — the things
 	-- you actually did — so they group with Outgoing rather than being dropped. That keeps the
 	-- Outgoing view a usable "what I performed" list, which is the view worth turning into automation.
 	local function PassesFilter(event): boolean
-		if Filter == "Combined" then
+		if Filter == "All" then
 			return true
 		end
 		local kind = event.kind or "remote"
@@ -643,13 +643,13 @@ return function(props: {
 
 	local FeedTabs = ViewSwitcher({
 		Parent = FilterRow,
-		Tabs = { "Combined", "Outgoing", "Incoming" },
+		Tabs = { "All", "Outgoing", "Incoming" },
 		OnSelected = function(Name)
 			Filter = Name
 			RenderEvents(View.Selected)
 		end,
 	})
-	FeedTabs:Select("Combined", true)
+	FeedTabs:Select("All", true)
 
 	local function RefreshRecordButton()
 		local recording = Recorder.IsRecording()
