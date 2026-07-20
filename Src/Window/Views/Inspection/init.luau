@@ -212,6 +212,18 @@ return function(props: {
 		Parent = Header,
 	})
 
+	-- Same idea for on-screen UI: hover to outline whatever GuiObject is under the cursor, click to
+	-- reveal it in the tree.
+	local UIPickButton = Interface.New("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "pick ui",
+		TextSize = 13,
+		TextTransparency = 0.45,
+		Size = UDim2.new(1, -92, 1, 0),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = Header,
+	})
+
 	-- Filter box. Matching is over Name and ClassName; matches are shown with their ancestor chain so
 	-- you still see where each hit lives.
 	local SearchBox = Interface.New("TextBox", {
@@ -1261,6 +1273,149 @@ return function(props: {
 				RunSearch(text)
 			end
 		end)
+	end)
+
+	--// UI picker //-------------------------------------------------------------------------------
+	-- Hover-outline the GuiObject under the cursor, click to reveal it in the tree. Hit-testing goes
+	-- through PlayerGui:GetGuiObjectsAtPosition, which returns topmost-first and already respects
+	-- render order — far more reliable than walking descendants and comparing bounds ourselves.
+	local UIHighlight = Interface.New("Frame", {
+		BackgroundColor3 = Color3.fromRGB(90, 160, 255),
+		BackgroundTransparency = 0.82,
+		BorderSizePixel = 0,
+		Visible = false,
+		ZIndex = 3500,
+		Parent = wax.shared.ScreenGui,
+
+		["UIStroke"] = { Color = Color3.fromRGB(130, 195, 255), Thickness = 2 },
+	})
+
+	local UIHighlightLabel = Interface.New("TextLabel", {
+		AnchorPoint = Vector2.new(0, 1),
+		BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+		Position = UDim2.new(0, 0, 0, -2),
+		Size = UDim2.fromOffset(0, 16),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Text = "",
+		TextSize = 12,
+		ZIndex = 3501,
+		Parent = UIHighlight,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 3) },
+		["UIPadding"] = { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) },
+	})
+
+	-- "Visible" has to mean actually on screen: every ancestor visible AND the containing
+	-- ScreenGui/LayerCollector enabled, or we'd happily outline something nobody can see.
+	local function IsOnScreen(object): boolean
+		local node = object
+		while node and node:IsA("GuiObject") do
+			if not node.Visible then
+				return false
+			end
+			node = node.Parent
+		end
+		local layer = object:FindFirstAncestorWhichIsA("LayerCollector")
+		if layer and layer.Enabled == false then
+			return false
+		end
+		return true
+	end
+
+	local function TopmostGuiAtCursor(): GuiObject?
+		local playerGui = wax.shared.LocalPlayer and wax.shared.LocalPlayer:FindFirstChild("PlayerGui")
+		if not playerGui then
+			return nil
+		end
+		local mousePos = wax.shared.UserInputService:GetMouseLocation()
+		local inset = game:GetService("GuiService"):GetGuiInset()
+
+		-- GetMouseLocation and AbsolutePosition don't always agree about the topbar inset, so try
+		-- both and take whichever actually hits something.
+		for _, point in ipairs({ mousePos, Vector2.new(mousePos.X, mousePos.Y + inset.Y) }) do
+			local ok, objects = pcall(function()
+				return playerGui:GetGuiObjectsAtPosition(point.X, point.Y)
+			end)
+			if ok and objects then
+				for _, object in ipairs(objects) do -- topmost first
+					local mine = false
+					pcall(function()
+						mine = object:IsDescendantOf(wax.shared.ScreenGui)
+					end)
+					if not mine and IsOnScreen(object) then
+						return object
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	local UIPickArmed, UIPickConnections, UIHovered = false, {}, nil
+
+	local function SetUIPickArmed(value: boolean)
+		UIPickArmed = value
+		UIPickButton.Text = value and "picking ui…" or "pick ui"
+		UIPickButton.TextTransparency = value and 0 or 0.45
+		UIPickButton.TextColor3 = value and Color3.fromRGB(130, 195, 255) or Color3.new(1, 1, 1)
+		UIHighlight.Visible = false
+		UIHovered = nil
+
+		for _, connection in ipairs(UIPickConnections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+		table.clear(UIPickConnections)
+
+		if not value then
+			return
+		end
+
+		table.insert(
+			UIPickConnections,
+			wax.shared.RunService.RenderStepped:Connect(function()
+				local target = TopmostGuiAtCursor()
+				UIHovered = target
+				if not target then
+					UIHighlight.Visible = false
+					return
+				end
+				local origin = wax.shared.ScreenGui.AbsolutePosition
+				UIHighlight.Position =
+					UDim2.fromOffset(target.AbsolutePosition.X - origin.X, target.AbsolutePosition.Y - origin.Y)
+				UIHighlight.Size = UDim2.fromOffset(target.AbsoluteSize.X, target.AbsoluteSize.Y)
+				UIHighlightLabel.Text = ("%s (%s)"):format(target.Name, target.ClassName)
+				UIHighlight.Visible = true
+			end)
+		)
+
+		table.insert(
+			UIPickConnections,
+			wax.shared.UserInputService.InputBegan:Connect(function(input)
+				-- deliberately NOT filtering gameProcessedEvent: the thing we're picking IS a GUI, so
+				-- the engine will always report the click as processed
+				if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+					return
+				end
+				local target = UIHovered
+				if not target then
+					return
+				end
+				SetUIPickArmed(false)
+				View.Reveal(target)
+				if props.OnPicked then
+					pcall(props.OnPicked, target)
+				end
+				if wax.shared.Sonner then
+					wax.shared.Sonner.info(("Inspecting %s (%s)"):format(target.Name, target.ClassName))
+				end
+			end)
+		)
+	end
+
+	UIPickButton.MouseButton1Click:Connect(function()
+		SetUIPickArmed(not UIPickArmed)
 	end)
 
 	RefreshLabel.MouseButton1Click:Connect(function()
