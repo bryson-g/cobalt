@@ -237,6 +237,76 @@ return function(props: {
 		end
 	end
 
+	-- marker + tint per stream, so a mixed timeline is scannable at a glance
+	local KIND_STYLE = {
+		remote = { colour = Color3.fromRGB(150, 190, 255) },
+		prompt = { marker = "⊙", colour = Color3.fromRGB(190, 165, 255) },
+		seat = { marker = "▭", colour = Color3.fromRGB(160, 210, 170) },
+	}
+
+	local function MakeEventRow(event, index: number)
+		local kind = event.kind or "remote"
+		local style = KIND_STYLE[kind] or KIND_STYLE.remote
+		local marker = style.marker or (event.type == "Outgoing" and "→" or "←")
+
+		local Row = Interface.New("Frame", {
+			BackgroundColor3 = BG,
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 0),
+			LayoutOrder = index,
+			Parent = Events,
+
+			["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+			["UIPadding"] = {
+				PaddingLeft = UDim.new(0, 8),
+				PaddingRight = UDim.new(0, 8),
+				PaddingTop = UDim.new(0, 4),
+				PaddingBottom = UDim.new(0, 4),
+			},
+		})
+
+		Interface.New("TextLabel", {
+			Text = ("%6.2fs  %s  %s"):format(event.t or 0, marker, tostring(event.name)),
+			TextSize = 14,
+			TextColor3 = style.colour,
+			Size = UDim2.new(1, -70, 0, 18),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Parent = Row,
+		})
+
+		Interface.New("TextLabel", {
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.fromScale(1, 0),
+			Size = UDim2.new(0, 66, 0, 18),
+			Text = kind == "remote" and (event.class or "") or kind,
+			TextSize = 12,
+			TextTransparency = 0.5,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Parent = Row,
+		})
+
+		return Row
+	end
+
+	-- Keep the feed pinned to the newest entry, but only while the user is already at the bottom, so
+	-- scrolling back through a live recording isn't yanked away. Deferred a frame because
+	-- AutomaticCanvasSize hasn't measured the new row yet.
+	local function StickToBottom()
+		local canvas = Events.AbsoluteCanvasSize.Y
+		local viewport = Events.AbsoluteSize.Y
+		local atBottom = (canvas - viewport - Events.CanvasPosition.Y) < 48
+		if not atBottom then
+			return
+		end
+		task.defer(function()
+			pcall(function()
+				wax.shared.RunService.Heartbeat:Wait()
+			end)
+			Events.CanvasPosition = Vector2.new(0, math.max(0, Events.AbsoluteCanvasSize.Y - Events.AbsoluteSize.Y))
+		end)
+	end
+
 	local function RenderEvents(session)
 		ClearEvents()
 		if not session then
@@ -245,43 +315,38 @@ return function(props: {
 		local total = #session.Events
 		local startIndex = math.max(1, total - MAX_EVENT_ROWS + 1)
 		for i = startIndex, total do
-			local event = session.Events[i]
-			local Row = Interface.New("Frame", {
-				BackgroundColor3 = BG,
-				AutomaticSize = Enum.AutomaticSize.Y,
-				Size = UDim2.new(1, 0, 0, 0),
-				LayoutOrder = i,
-				Parent = Events,
-
-				["UICorner"] = { CornerRadius = UDim.new(0, 4) },
-				["UIPadding"] = {
-					PaddingLeft = UDim.new(0, 8),
-					PaddingRight = UDim.new(0, 8),
-					PaddingTop = UDim.new(0, 4),
-					PaddingBottom = UDim.new(0, 4),
-				},
-			})
-
-			Interface.New("TextLabel", {
-				Text = ("%6.2fs  %s  %s"):format(event.t or 0, event.type == "Outgoing" and "→" or "←", event.name),
-				TextSize = 14,
-				Size = UDim2.new(1, -70, 0, 18),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextTruncate = Enum.TextTruncate.AtEnd,
-				Parent = Row,
-			})
-
-			Interface.New("TextLabel", {
-				AnchorPoint = Vector2.new(1, 0),
-				Position = UDim2.fromScale(1, 0),
-				Size = UDim2.new(0, 66, 0, 18),
-				Text = event.class or "",
-				TextSize = 12,
-				TextTransparency = 0.5,
-				TextXAlignment = Enum.TextXAlignment.Right,
-				Parent = Row,
-			})
+			MakeEventRow(session.Events[i], i)
 		end
+		StickToBottom()
+	end
+
+	-- append just the newest event (live feed while recording) instead of rebuilding the list
+	local function AppendLatestEvent(session)
+		local total = #session.Events
+		local event = session.Events[total]
+		if not event then
+			return
+		end
+		MakeEventRow(event, total)
+
+		local rows = 0
+		for _, child in ipairs(Events:GetChildren()) do
+			if child:IsA("Frame") then
+				rows += 1
+			end
+		end
+		if rows > MAX_EVENT_ROWS then
+			local oldest
+			for _, child in ipairs(Events:GetChildren()) do
+				if child:IsA("Frame") and (not oldest or child.LayoutOrder < oldest.LayoutOrder) then
+					oldest = child
+				end
+			end
+			if oldest then
+				oldest:Destroy()
+			end
+		end
+		StickToBottom()
 	end
 
 	local function RefreshToolbar()
@@ -557,6 +622,7 @@ return function(props: {
 				RefreshRow(session)
 				if View.Selected == session then
 					RefreshToolbar()
+					AppendLatestEvent(session) -- live feed: don't wait for the recording to stop
 				end
 			end
 		elseif kind == "stopped" then

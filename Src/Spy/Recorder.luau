@@ -111,16 +111,27 @@ function Recorder.SessionToTable(session, opts)
 		local startIndex = math.max(1, total - limit + 1)
 		for i = startIndex, total do
 			local event = session.Events[i]
-			events[#events + 1] = {
+			local kind = event.kind or "remote"
+			local entry = {
 				index = i,
 				t = event.t,
-				remote = event.path,
+				kind = kind,
 				name = event.name,
 				class = event.class,
-				direction = event.type,
-				isExecutor = event.isExecutor or false,
-				args = SerialiseArgs(event.call),
+				remote = event.path,
+				path = event.path,
 			}
+			if kind == "remote" then
+				entry.direction = event.type
+				entry.isExecutor = event.isExecutor or false
+				entry.args = SerialiseArgs(event.call)
+			elseif kind == "prompt" then
+				local snapshot = event.snapshot
+				entry.actionText = snapshot and snapshot.actionText
+				entry.objectText = snapshot and snapshot.objectText
+				entry.attributes = snapshot and snapshot.attributes
+			end
+			events[#events + 1] = entry
 		end
 	end
 	return {
@@ -253,10 +264,11 @@ function Recorder.LoadSaved(): number
 				for _, event in ipairs(data.events or {}) do
 					session.Events[#session.Events + 1] = {
 						t = event.t or 0,
+						kind = event.kind or "remote",
 						type = event.direction,
 						name = event.name,
 						class = event.class,
-						path = event.remote,
+						path = event.remote or event.path,
 						isExecutor = event.isExecutor,
 						args = event.args, -- serialised; revived at playback
 					}
@@ -311,6 +323,18 @@ end
 
 --// Capture //-------------------------------------------------------------------------------------
 
+-- Single entry point for every captured stream, so a session is one ordered timeline of
+-- remotes + prompt activations + seats rather than remotes only.
+local function AppendEvent(event)
+	local session = Recorder.Recording
+	if not session or #session.Events >= MAX_EVENTS_PER_SESSION then
+		return
+	end
+	event.t = tick() - session.StartClock
+	session.Events[#session.Events + 1] = event
+	Notify("event", session)
+end
+
 local function OnBatch(batch)
 	local session = Recorder.Recording
 	if not session or typeof(batch) ~= "table" then
@@ -332,13 +356,13 @@ local function OnBatch(batch)
 				end
 			end
 			local call = log and log.Calls[notification.CallIndex]
-			if call and #session.Events < MAX_EVENTS_PER_SESSION then
+			if call then
 				local path
 				pcall(function()
 					path = log.Instance:GetFullName()
 				end)
-				session.Events[#session.Events + 1] = {
-					t = tick() - session.StartClock,
+				AppendEvent({
+					kind = "remote",
 					instance = log.Instance,
 					type = direction,
 					call = call, -- original values, needed for faithful playback
@@ -346,8 +370,7 @@ local function OnBatch(batch)
 					class = log.Instance.ClassName,
 					path = path or log.Instance.Name,
 					isExecutor = call.IsExecutor or false,
-				}
-				Notify("event", session)
+				})
 			end
 		end
 	end
@@ -419,7 +442,27 @@ local function BuildIgnoreMatcher()
 		end
 	end
 
+	-- prompts have their own persisted ignore set
+	local promptKeys = {}
+	if AgentAPI and AgentAPI.ListIgnoredPrompts then
+		local ok, list = pcall(AgentAPI.ListIgnoredPrompts)
+		if ok and type(list) == "table" then
+			promptKeys = list
+		end
+	end
+
 	return function(event): boolean
+		local kind = event.kind or "remote"
+		if kind == "prompt" then
+			local path, name = event.path or "", event.name or ""
+			for _, key in ipairs(promptKeys) do
+				if key == path or key == name or (key ~= "" and string.find(path, key, 1, true)) then
+					return true
+				end
+			end
+			return false
+		end
+
 		-- live Log wins when we still have the instance
 		if typeof(event.instance) == "Instance" then
 			local category = wax.shared.Logs[event.type]
@@ -456,6 +499,8 @@ function Recorder.Play(session, opts)
 	local speed = math.max(0.05, opts.speed or 1)
 	local maxGap = opts.maxGap or 2
 	local includeIncoming = opts.includeIncoming == true
+	-- prompt activations are usually the manual actions worth reproducing, so they replay by default
+	local includePrompts = opts.includePrompts ~= false
 
 	local CodeGen = require("@src/Utils/CodeGen/Generator")
 	local handle = { Stopped = false, Session = session, Fired = 0, Failed = 0, Skipped = 0 }
@@ -483,7 +528,32 @@ function Recorder.Play(session, opts)
 				break
 			end
 
-			if event.type == "Outgoing" or (includeIncoming and event.type == "Incoming") then
+			local kind = event.kind or "remote"
+
+			if kind == "seat" then
+				-- observational: sitting marks where in the run it happened, nothing to re-fire
+				handle.Skipped += 1
+			elseif kind == "prompt" then
+				if not includePrompts then
+					handle.Skipped += 1
+				elseif isIgnored and isIgnored(event) then
+					handle.Skipped += 1
+				else
+					local prompt = event.instance
+					if typeof(prompt) ~= "Instance" or prompt.Parent == nil then
+						prompt = ResolveInstancePath(event.path) -- restored session, or prompt was replaced
+					end
+					local ok = prompt ~= nil
+						and pcall(function()
+							fireproximityprompt(prompt)
+						end)
+					if ok then
+						handle.Fired += 1
+					else
+						handle.Failed += 1
+					end
+				end
+			elseif event.type == "Outgoing" or (includeIncoming and event.type == "Incoming") then
 				if isIgnored and isIgnored(event) then
 					handle.Skipped += 1
 				else
@@ -546,7 +616,43 @@ function Recorder.Start_Listening()
 		return
 	end
 	Recorder.Listening = true
+
+	-- remotes (via the existing capture pipeline)
 	wax.shared.Connect(wax.shared.Communicator.Event:Connect(OnBatch))
+
+	-- prompt activations — a manual process is usually driven by these, so they belong on the
+	-- timeline (and are re-fireable on playback), not just the remotes they happen to trigger
+	if wax.shared.PromptSpy then
+		wax.shared.PromptSpy.Subscribe(function(kind, log, snapshot)
+			if kind ~= "activation" then
+				return
+			end
+			AppendEvent({
+				kind = "prompt",
+				instance = log.Instance,
+				name = (snapshot and snapshot.actionText ~= "" and snapshot.actionText) or "prompt",
+				class = "ProximityPrompt",
+				path = (snapshot and snapshot.path) or "",
+				snapshot = snapshot,
+			})
+		end)
+	end
+
+	-- seats — contextual only (sitting isn't replayed), but it marks where in the run it happened
+	if wax.shared.SeatSpy then
+		wax.shared.SeatSpy.Subscribe(function(kind, event)
+			if kind ~= "sat" or not event then
+				return
+			end
+			AppendEvent({
+				kind = "seat",
+				instance = event.seat,
+				name = event.name,
+				class = event.class,
+				path = event.path,
+			})
+		end)
+	end
 end
 
 return Recorder
