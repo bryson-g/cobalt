@@ -482,7 +482,7 @@ return function(props: {
 		DeleteButton.Visible = has
 		NameBox.TextEditable = has
 		if has then
-			SaveButton.Text = session.Saved and "Saved" or "Save"
+			SaveButton.Text = session.Saved and "Re-save" or "Save"
 			SaveButton.BackgroundColor3 = session.Saved and Color3.fromRGB(40, 70, 55) or Color3.fromRGB(45, 70, 110)
 			MetaLabel.Text = ("%d events%s"):format(#session.Events, session.Restored and " · restored" or "")
 			if not NameBox:IsFocused() then
@@ -718,7 +718,7 @@ return function(props: {
 			return
 		end
 		if Recorder.Save(session) then
-			wax.shared.Sonner.success("Saved — persists across injections")
+			wax.shared.Sonner.success("Written to Cobalt/Sessions")
 		else
 			wax.shared.Sonner.error("Failed to save session")
 		end

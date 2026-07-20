@@ -205,16 +205,23 @@ function Recorder.Stop()
 	session.EndedAt = os.time()
 	Recorder.Recording = nil
 
+	-- Persist as soon as the recording is finished: a session you had to remember to Save was one
+	-- you'd lose to a rejoin or an unload. Save stays available for re-writing after edits.
+	local saved = Recorder.Save(session)
+
 	if wax.shared.Sonner then
-		wax.shared.Sonner.success(("Recorded %d events — %s (unsaved)"):format(#session.Events, session.Name))
+		wax.shared.Sonner.success(
+			("Recorded %d events — %s%s"):format(#session.Events, session.Name, saved and "" or " (save failed)")
+		)
 	end
 	Notify("stopped", session)
 	return session
 end
 
 --// Naming + persistence //------------------------------------------------------------------------
--- Saving is explicit: a recording lives in memory until you Save it, and only saved sessions come
--- back on the next injection. Renaming a saved session re-writes its file so the name sticks too.
+-- Recordings persist automatically when they stop, so they survive a rejoin or an unload without
+-- anyone having to remember a button. Save re-writes an existing file; renaming or editing a saved
+-- session re-writes it too, so what's on disk always matches what you're looking at.
 
 local SESSION_DIR = "Cobalt/Sessions"
 
@@ -346,6 +353,9 @@ function Recorder.RemoveEvent(session, event): boolean
 	for index, existing in ipairs(session.Events) do
 		if existing == event then
 			table.remove(session.Events, index)
+			if session.Saved then
+				Recorder.Save(session) -- otherwise the file would still hold the removed event
+			end
 			Notify("mutated", session)
 			return true
 		end
@@ -385,6 +395,9 @@ function Recorder.IgnoreAndPurge(session, event): (boolean, number)
 					removed += 1
 				end
 			end
+		end
+		if session.Saved then
+			Recorder.Save(session) -- keep the file in step with the purge
 		end
 		Notify("mutated", session)
 	end

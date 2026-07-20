@@ -834,8 +834,8 @@ function AgentAPI.DeleteSession(id: string): boolean
 	return rec ~= nil and rec.Delete(id)
 end
 
--- Persist a session to Cobalt/Sessions/<id>.json so it comes back on the next injection. Recordings
--- stay in memory until saved — this is the explicit step.
+-- Re-write a session to Cobalt/Sessions/<id>.json. Recordings save themselves when they stop, so
+-- this is only needed to force a re-write.
 function AgentAPI.SaveSession(id: string): boolean
 	local rec = Recorder()
 	local session = rec and rec.Get(id)
