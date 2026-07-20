@@ -225,6 +225,20 @@ return function(props: {
 		Parent = RightWrap,
 	})
 
+	-- Suppressed traffic is recorded but hidden by default — it's the noise you already chose to
+	-- filter out; this reveals it without it drowning the real events.
+	local IgnoredToggle = Interface.New("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		Size = UDim2.fromOffset(104, 22),
+		Text = "⊘ ignored: off",
+		TextSize = 12,
+		Parent = FilterRow,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+	})
+
 	local Events = Interface.New("ScrollingFrame", {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundTransparency = 1,
@@ -253,11 +267,15 @@ return function(props: {
 	local MAX_EVENT_ROWS = 300
 
 	local Filter = "All" -- "All" | "Outgoing" | "Incoming"
+	local ShowIgnored = false
 
 	-- Prompts and seats have no remote direction, but they ARE client-originated actions — the things
 	-- you actually did — so they group with Outgoing rather than being dropped. That keeps the
 	-- Outgoing view a usable "what I performed" list, which is the view worth turning into automation.
 	local function PassesFilter(event): boolean
+		if event.ignored and not ShowIgnored then
+			return false
+		end
 		if Filter == "All" then
 			return true
 		end
@@ -329,10 +347,16 @@ return function(props: {
 		return options
 	end
 
+	local IGNORED_RED = Color3.fromRGB(230, 110, 110)
+
 	local function MakeEventRow(event, index: number)
 		local kind = event.kind or "remote"
 		local style = KIND_STYLE[kind] or KIND_STYLE.remote
 		local marker = style.marker or (event.type == "Outgoing" and "→" or "←")
+		local isIgnored = event.ignored == true
+		if isIgnored then
+			marker = "⊘" -- distinct from the direction arrows, so it reads as "suppressed" at a glance
+		end
 
 		-- a TextButton (not a Frame) so the row can receive right-clicks
 		local Row = Interface.New("TextButton", {
@@ -360,7 +384,7 @@ return function(props: {
 		Interface.New("TextLabel", {
 			Text = ("%6.2fs  %s  %s"):format(event.t or 0, marker, tostring(event.name)),
 			TextSize = 14,
-			TextColor3 = style.colour,
+			TextColor3 = isIgnored and IGNORED_RED or style.colour,
 			Size = UDim2.new(1, -70, 0, 18),
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
@@ -371,9 +395,10 @@ return function(props: {
 			AnchorPoint = Vector2.new(1, 0),
 			Position = UDim2.fromScale(1, 0),
 			Size = UDim2.new(0, 66, 0, 18),
-			Text = kind == "remote" and (event.class or "") or kind,
+			Text = isIgnored and "ignored" or (kind == "remote" and (event.class or "") or kind),
+			TextColor3 = isIgnored and IGNORED_RED or Color3.new(1, 1, 1),
 			TextSize = 12,
-			TextTransparency = 0.5,
+			TextTransparency = isIgnored and 0.15 or 0.5,
 			TextXAlignment = Enum.TextXAlignment.Right,
 			Parent = Row,
 		})
@@ -477,8 +502,15 @@ return function(props: {
 		local live = session.EndedAt == nil
 		local duration = (session.EndedAt or os.time()) - session.StartedAt
 		row.Title.Text = session.Name
-		row.Sub.Text = ("%d events · %ds%s%s"):format(
+		local ignored = 0
+		for _, event in ipairs(session.Events) do
+			if event.ignored then
+				ignored += 1
+			end
+		end
+		row.Sub.Text = ("%d events%s · %ds%s%s"):format(
 			#session.Events,
+			ignored > 0 and (" (" .. ignored .. " ignored)") or "",
 			duration,
 			session.Saved and "  ·  saved" or "",
 			live and "  ● recording" or ""
@@ -661,6 +693,13 @@ return function(props: {
 		end,
 	})
 	FeedTabs:Select("All", true)
+
+	IgnoredToggle.MouseButton1Click:Connect(function()
+		ShowIgnored = not ShowIgnored
+		IgnoredToggle.Text = ShowIgnored and "⊘ ignored: on" or "⊘ ignored: off"
+		IgnoredToggle.BackgroundColor3 = ShowIgnored and Color3.fromRGB(90, 45, 45) or Color3.fromRGB(40, 40, 40)
+		RenderEvents(View.Selected)
+	end)
 
 	local function RefreshRecordButton()
 		local recording = Recorder.IsRecording()

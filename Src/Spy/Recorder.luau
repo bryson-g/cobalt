@@ -5,12 +5,12 @@
 	Records every remote call that happens between Start() and Stop() into a named session, so a
 	process you performed BY HAND can be captured once, read back as data, and replayed/automated.
 
-	It deliberately adds NO new hooks: Log:Call already queues every captured call onto
-	wax.shared.Communicator, so the recorder just subscribes to that batch and resolves each
-	notification back to its Log. Consequence worth knowing: recording inherits the capture filters —
-	an ignored/blocked remote never produces a call, so it never lands in a session. That's usually
-	what you want (the noise filter applies), but it means a session is "what Cobalt captured", not
-	"every packet on the wire".
+	It adds no new hooks for normal traffic: Log:Call already queues every captured call onto
+	wax.shared.Communicator, so the recorder subscribes to that batch and resolves each notification
+	back to its Log. Traffic the filters SUPPRESS (ignored/filtered/blocked) never reaches that queue,
+	so Log:Call hands those straight to Recorder.CaptureIgnored instead — a session is therefore the
+	complete picture, with suppressed events flagged `ignored = true` so they can be told apart,
+	filtered, and never replayed.
 
 	Each event keeps BOTH:
 	  * `call` — the original in-memory call info, so playback can re-fire with real argument values
@@ -104,7 +104,15 @@ end
 --- A session as plain, JSON-safe data (what the agent and the export file see).
 function Recorder.SessionToTable(session, opts)
 	opts = opts or {}
+	-- opts.ignored: nil = everything, true = only suppressed traffic, false = only real traffic
+	local wantIgnored = opts.ignored
 	local events = {}
+	local ignoredCount = 0
+	for _, event in ipairs(session.Events) do
+		if event.ignored then
+			ignoredCount += 1
+		end
+	end
 	if opts.includeEvents ~= false then
 		local limit = opts.maxEvents or 2000
 		local total = #session.Events
@@ -112,6 +120,9 @@ function Recorder.SessionToTable(session, opts)
 		for i = startIndex, total do
 			local event = session.Events[i]
 			local kind = event.kind or "remote"
+			if wantIgnored ~= nil and (event.ignored == true) ~= wantIgnored then
+				continue
+			end
 			local entry = {
 				index = i,
 				t = event.t,
@@ -124,6 +135,7 @@ function Recorder.SessionToTable(session, opts)
 			if kind == "remote" then
 				entry.direction = event.type
 				entry.isExecutor = event.isExecutor or false
+				entry.ignored = event.ignored == true
 				entry.args = SerialiseArgs(event.call)
 			elseif kind == "prompt" then
 				local snapshot = event.snapshot
@@ -146,6 +158,8 @@ function Recorder.SessionToTable(session, opts)
 		-- than the original call tables; fidelity is lower than a session recorded this injection.
 		restored = session.Restored == true,
 		eventCount = #session.Events,
+		ignoredCount = ignoredCount,
+		activeCount = #session.Events - ignoredCount,
 		events = events,
 	}
 end
@@ -270,6 +284,7 @@ function Recorder.LoadSaved(): number
 						class = event.class,
 						path = event.remote or event.path,
 						isExecutor = event.isExecutor,
+						ignored = event.ignored == true,
 						args = event.args, -- serialised; revived at playback
 					}
 				end
@@ -426,6 +441,7 @@ local function OnBatch(batch)
 					class = log.Instance.ClassName,
 					path = path or log.Instance.Name,
 					isExecutor = call.IsExecutor or false,
+					ignored = false,
 				})
 			end
 		end
@@ -433,6 +449,30 @@ local function OnBatch(batch)
 end
 
 --// Playback //------------------------------------------------------------------------------------
+
+--- Record a call that the capture filters suppressed (ignored/filtered/blocked), flagged so it can be
+--- told apart from real traffic. Called from Log:Call, which is the only place that sees these — they
+--- never reach the Communicator that OnBatch listens to.
+function Recorder.CaptureIgnored(log, info)
+	if not Recorder.Recording or not log or not log.Instance then
+		return
+	end
+	local path
+	pcall(function()
+		path = log.Instance:GetFullName()
+	end)
+	AppendEvent({
+		kind = "remote",
+		instance = log.Instance,
+		type = log.Type,
+		call = info,
+		name = log.Instance.Name,
+		class = log.Instance.ClassName,
+		path = path or log.Instance.Name,
+		isExecutor = info.IsExecutor or false,
+		ignored = true,
+	})
+end
 
 --// Playback helpers //----------------------------------------------------------------------------
 
@@ -510,6 +550,10 @@ local function BuildIgnoreMatcher()
 	end
 
 	return function(event): boolean
+		-- captured while suppressed: it never actually reached the server, so never replay it
+		if event.ignored then
+			return true
+		end
 		local kind = event.kind or "remote"
 		if kind == "prompt" then
 			local path, name = event.path or "", event.name or ""

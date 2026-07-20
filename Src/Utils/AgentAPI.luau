@@ -768,6 +768,10 @@ function AgentAPI.GetSessions(opts): { any }
 end
 
 -- One session with its full event list (this is the one to read when turning a recording into code).
+-- A session records BOTH real traffic and traffic the filters suppressed; suppressed events carry
+-- ignored=true and are never replayed. Split them with opts.ignored:
+--   nil (default) everything · false only real traffic · true only the suppressed traffic
+-- The summary always reports eventCount / activeCount / ignoredCount regardless of the filter.
 function AgentAPI.GetSession(id: string, opts)
 	local rec = Recorder()
 	if not rec then
@@ -775,6 +779,19 @@ function AgentAPI.GetSession(id: string, opts)
 	end
 	local session = rec.Get(id)
 	return session and rec.SessionToTable(session, opts or {}) or nil
+end
+
+-- Convenience wrappers over the same filter, for when the intent is clearer than an options table.
+function AgentAPI.GetSessionActive(id: string, opts)
+	opts = opts or {}
+	opts.ignored = false
+	return AgentAPI.GetSession(id, opts)
+end
+
+function AgentAPI.GetSessionIgnored(id: string, opts)
+	opts = opts or {}
+	opts.ignored = true
+	return AgentAPI.GetSession(id, opts)
 end
 
 function AgentAPI.ExportSession(id: string, fileName: string?): (string?, number)
