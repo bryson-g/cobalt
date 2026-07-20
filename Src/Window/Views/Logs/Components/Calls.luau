@@ -254,6 +254,21 @@ return function(props: {
 				end,
 			},
 			{
+				-- rh fork: hand this call to the Playground to edit its arguments and re-fire it
+				Text = "Send to Playground",
+				Icon = "flask-conical",
+				Condition = function()
+					local CallInfo = Calls.ActiveCallInfo
+					return CallInfo ~= nil and CallInfo.Type == "Outgoing"
+				end,
+				Callback = function()
+					local CallInfo = Calls.ActiveCallInfo
+					if CallInfo and Window.OpenPlayground then
+						Window.OpenPlayground(CallInfo)
+					end
+				end,
+			},
+			{
 				Text = "Replay",
 				Icon = "play",
 				Callback = function()

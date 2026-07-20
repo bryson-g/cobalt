@@ -174,6 +174,7 @@ local PromptsRoot = NewViewRoot(false)
 local InspectionRoot = NewViewRoot(false)
 local SeatsRoot = NewViewRoot(false)
 local SessionsRoot = NewViewRoot(false)
+local PlaygroundRoot = NewViewRoot(false)
 
 --// Views \\--
 local LogsPage = require(script.Views.Logs)({
@@ -265,6 +266,19 @@ local SessionsView = require(script.Views.Sessions)({
 })
 Window.Sessions = SessionsView
 
+-- rh fork: Playground — edit a captured outgoing call's arguments and fire it (optionally on a loop).
+local PlaygroundView = require(script.Views.Playground)({
+	MainFrame = PlaygroundRoot,
+	ContextMenu = ContextMenus,
+})
+Window.Playground = PlaygroundView
+-- the Remotes call list uses this to hand a call over and bring the tab forward
+Window.OpenPlayground = function(info)
+	if PlaygroundView.Load(info) and Switcher then
+		Switcher:Select("Playground")
+	end
+end
+
 wax.shared.ClearLogs = LogsPage.ClearLogs
 wax.shared.GetCurrentLog = LogsPage.GetCurrentLog
 
@@ -339,12 +353,13 @@ local TabStrip = Interface.New("Frame", {
 local CurrentMode = "Remotes"
 Switcher = require(script.Components.ViewSwitcher)({
 	Parent = TabStrip,
-	Tabs = { "Remotes", "Prompts", "Seats", "Sessions", "Explorer" },
+	Tabs = { "Remotes", "Prompts", "Seats", "Sessions", "Playground", "Explorer" },
 	OnSelected = function(Name)
 		CurrentMode = Name
 		RemotesRoot.Visible = Name == "Remotes"
 		PromptsRoot.Visible = Name == "Prompts"
 		InspectionRoot.Visible = Name == "Explorer"
+		PlaygroundRoot.Visible = Name == "Playground"
 		SeatsRoot.Visible = Name == "Seats"
 		SessionsRoot.Visible = Name == "Sessions"
 	end,
