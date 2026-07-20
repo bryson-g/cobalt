@@ -210,14 +210,15 @@ return function(props: {
 		},
 	})
 
-	local FireButton = ToolButton(ActionRow, "▶ Fire once", 1, FIRE_GREEN)
+	local FireButton = ToolButton(ActionRow, "▶ Fire", 1, FIRE_GREEN)
 	local ResetButton = ToolButton(ActionRow, "Reset args", 2)
 	local RemoveButton = ToolButton(ActionRow, "Remove", 3)
 
 	local StatusLabel = Interface.New("TextLabel", {
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.fromScale(1, 0),
-		Size = UDim2.new(0, 170, 0, 22),
+		-- scales with the pane so it can never grow into the buttons on a narrow window
+		Size = UDim2.new(0.34, 0, 0, 22),
 		Text = "",
 		TextSize = 12,
 		TextTransparency = 0.35,
@@ -257,8 +258,8 @@ return function(props: {
 	})
 
 	Caption(RepeatRow, "seconds", 3)
-	local LoopButton = ToolButton(RepeatRow, "▶ Start repeating", 4)
-	Caption(RepeatRow, ("(minimum %ss)"):format(MIN_INTERVAL), 5, 0.55)
+	local LoopButton = ToolButton(RepeatRow, "▶ Start", 4)
+	Caption(RepeatRow, ("min %ss"):format(MIN_INTERVAL), 5, 0.55)
 
 	local ArgsHeader = Interface.New("TextLabel", {
 		Position = UDim2.fromOffset(2, 90),
@@ -301,7 +302,7 @@ return function(props: {
 			LoopHandle.Stopped = true
 			LoopHandle = nil
 		end
-		LoopButton.Text = "▶ Start repeating"
+		LoopButton.Text = "▶ Start"
 		LoopButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 	end
 
@@ -577,7 +578,7 @@ return function(props: {
 
 		local handle = { Stopped = false }
 		LoopHandle = handle
-		LoopButton.Text = "■ Stop repeating"
+		LoopButton.Text = "■ Stop"
 		LoopButton.BackgroundColor3 = STOP_RED
 
 		task.spawn(function()
