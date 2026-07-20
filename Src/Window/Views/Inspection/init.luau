@@ -66,7 +66,7 @@ local PROPERTY_SETS = {
 	{ "Instance", { "Name", "ClassName", "Archivable" } },
 	{ "BasePart", {
 		"Size", "Position", "Orientation", "Anchored", "CanCollide", "CanQuery", "CanTouch",
-		"Massless", "Material", "Color", "Transparency", "Reflectance", "CastShadow",
+		"Massless", "Material", "BrickColor", "Color", "Transparency", "Reflectance", "CastShadow",
 		"CollisionGroup", "Shape", "AssemblyLinearVelocity",
 	} },
 	{ "MeshPart", { "MeshId", "TextureID", "DoubleSided" } },
