@@ -114,15 +114,23 @@ function Recorder.SessionToTable(session, opts)
 		end
 	end
 	if opts.includeEvents ~= false then
-		local limit = opts.maxEvents or 2000
-		local total = #session.Events
-		local startIndex = math.max(1, total - limit + 1)
-		for i = startIndex, total do
+		-- Filter FIRST, then keep the newest `maxEvents` of what matched. Windowing before filtering
+		-- would make maxEvents mean "matches among the last N events", so asking for 5 ignored ones
+		-- could hand back 4 — the cap belongs to the result, not the scan.
+		local matching = {}
+		for i = 1, #session.Events do
 			local event = session.Events[i]
-			local kind = event.kind or "remote"
-			if wantIgnored ~= nil and (event.ignored == true) ~= wantIgnored then
-				continue
+			if wantIgnored == nil or (event.ignored == true) == wantIgnored then
+				matching[#matching + 1] = { index = i, event = event }
 			end
+		end
+
+		local limit = opts.maxEvents or 2000
+		local startIndex = math.max(1, #matching - limit + 1)
+		for position = startIndex, #matching do
+			local i = matching[position].index
+			local event = matching[position].event
+			local kind = event.kind or "remote"
 			local entry = {
 				index = i,
 				t = event.t,
