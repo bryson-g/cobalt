@@ -509,6 +509,7 @@ wax.shared.SeatSpy.Start()
 wax.shared.RecordedSessions = {}
 wax.shared.Recorder = require(script.Spy.Recorder)
 wax.shared.Recorder.Start_Listening()
+pcall(wax.shared.Recorder.LoadSaved) -- bring back sessions that were explicitly saved
 
 wax.shared.NewLog = function(Instance, Type, CallingScript)
 	local Log = wax.shared.Log.new(Instance, Type, wax.shared.GetTableLength(wax.shared.Logs[Type]) + 1, CallingScript)

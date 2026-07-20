@@ -777,6 +777,26 @@ function AgentAPI.DeleteSession(id: string): boolean
 	return rec ~= nil and rec.Delete(id)
 end
 
+-- Persist a session to Cobalt/Sessions/<id>.json so it comes back on the next injection. Recordings
+-- stay in memory until saved — this is the explicit step.
+function AgentAPI.SaveSession(id: string): boolean
+	local rec = Recorder()
+	local session = rec and rec.Get(id)
+	return session ~= nil and rec.Save(session)
+end
+
+function AgentAPI.RenameSession(id: string, name: string): boolean
+	local rec = Recorder()
+	local session = rec and rec.Get(id)
+	return session ~= nil and rec.Rename(session, name)
+end
+
+-- Re-read saved sessions off disk (also runs automatically at load).
+function AgentAPI.LoadSavedSessions(): number
+	local rec = Recorder()
+	return rec and rec.LoadSaved() or 0
+end
+
 -- Clear the captured-call view (all remotes, or a specific instance/direction). Refreshes the UI.
 function AgentAPI.ClearLogs(instance, direction)
 	if wax.shared.ClearLogs then

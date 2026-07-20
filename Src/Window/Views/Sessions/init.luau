@@ -138,9 +138,28 @@ return function(props: {
 		},
 	})
 
+	-- Name row. Editing it IS the rename — no dialog needed, and it keeps the title off the button row
+	-- (they shared one row before, which is what pushed the actions out of the window).
+	local NameBox = Interface.New("TextBox", {
+		BackgroundColor3 = BG_INNER,
+		Size = UDim2.new(1, 0, 0, 24),
+		Position = UDim2.fromOffset(0, 0),
+		Text = "",
+		PlaceholderText = "Select a session",
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextEditable = false,
+		ClearTextOnFocus = false,
+		Parent = RightWrap,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+		["UIPadding"] = { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) },
+	})
+
 	local Toolbar = Interface.New("Frame", {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 26),
+		Position = UDim2.fromOffset(0, 28),
+		Size = UDim2.new(1, 0, 0, 24),
 		Parent = RightWrap,
 
 		["UIListLayout"] = {
@@ -151,21 +170,11 @@ return function(props: {
 		},
 	})
 
-	local DetailTitle = Interface.New("TextLabel", {
-		Text = "Select a session",
-		TextSize = 14,
-		TextTransparency = 0.3,
-		Size = UDim2.new(0, 210, 1, 0),
-		LayoutOrder = 0,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = Toolbar,
-	})
-
+	-- sized from the label so the row fits inside the default window instead of running off it
 	local function ToolbarButton(text: string, order: number, color: Color3?)
 		return Interface.New("TextButton", {
 			BackgroundColor3 = color or Color3.fromRGB(45, 45, 45),
-			Size = UDim2.fromOffset(#text * 8 + 18, 22),
+			Size = UDim2.fromOffset(#text * 7 + 16, 22),
 			LayoutOrder = order,
 			Text = text,
 			TextSize = 13,
@@ -178,14 +187,26 @@ return function(props: {
 
 	local PlayButton = ToolbarButton("Play", 1, Color3.fromRGB(40, 90, 60))
 	local StopButton = ToolbarButton("Stop", 2, Color3.fromRGB(90, 45, 45))
-	local ExportButton = ToolbarButton("Export", 3)
-	local DeleteButton = ToolbarButton("Delete", 4)
+	local SaveButton = ToolbarButton("Save", 3, Color3.fromRGB(45, 70, 110))
+	local ExportButton = ToolbarButton("Export", 4)
+	local DeleteButton = ToolbarButton("Delete", 5)
+
+	local MetaLabel = Interface.New("TextLabel", {
+		Text = "",
+		TextSize = 12,
+		TextTransparency = 0.45,
+		Size = UDim2.new(0, 110, 1, 0),
+		LayoutOrder = 6,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = Toolbar,
+	})
 
 	local Events = Interface.New("ScrollingFrame", {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -32),
+		Size = UDim2.new(1, 0, 1, -58),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		ScrollBarThickness = 2,
@@ -268,12 +289,20 @@ return function(props: {
 		local has = session ~= nil
 		PlayButton.Visible = has
 		StopButton.Visible = has and Recorder.Playing ~= nil
+		SaveButton.Visible = has
 		ExportButton.Visible = has
 		DeleteButton.Visible = has
+		NameBox.TextEditable = has
 		if has then
-			DetailTitle.Text = ("%s  ·  %d events"):format(session.Name, #session.Events)
+			SaveButton.Text = session.Saved and "Saved" or "Save"
+			SaveButton.BackgroundColor3 = session.Saved and Color3.fromRGB(40, 70, 55) or Color3.fromRGB(45, 70, 110)
+			MetaLabel.Text = ("%d events%s"):format(#session.Events, session.Restored and " · restored" or "")
+			if not NameBox:IsFocused() then
+				NameBox.Text = session.Name
+			end
 		else
-			DetailTitle.Text = "Select a session"
+			MetaLabel.Text = ""
+			NameBox.Text = ""
 		end
 	end
 
@@ -285,7 +314,12 @@ return function(props: {
 		local live = session.EndedAt == nil
 		local duration = (session.EndedAt or os.time()) - session.StartedAt
 		row.Title.Text = session.Name
-		row.Sub.Text = ("%d events · %ds%s"):format(#session.Events, duration, live and "  ● recording" or "")
+		row.Sub.Text = ("%d events · %ds%s%s"):format(
+			#session.Events,
+			duration,
+			session.Saved and "  ·  saved" or "",
+			live and "  ● recording" or ""
+		)
 		row.Sub.TextColor3 = live and REC_RED or Color3.new(1, 1, 1)
 	end
 
@@ -357,6 +391,53 @@ return function(props: {
 			SelectSession(session)
 		end)
 
+		local Menu = ContextMenu:Create(Root, {
+			{
+				Text = "Rename",
+				Icon = "pencil",
+				Callback = function()
+					SelectSession(session)
+					NameBox:CaptureFocus() -- the name field IS the rename control
+				end,
+			},
+			{
+				Text = function()
+					return session.Saved and "Re-save" or "Save"
+				end,
+				Icon = "save",
+				Callback = function()
+					SelectSession(session)
+					if Recorder.Save(session) then
+						wax.shared.Sonner.success("Saved " .. session.Name)
+					else
+						wax.shared.Sonner.error("Failed to save session")
+					end
+					RefreshRow(session)
+					RefreshToolbar()
+				end,
+			},
+			{
+				Text = "Play",
+				Icon = "play",
+				Callback = function()
+					SelectSession(session)
+					if not Recorder.Playing then
+						Recorder.Play(session)
+						RefreshToolbar()
+					end
+				end,
+			},
+			{
+				Text = "Delete",
+				Icon = "trash",
+				Callback = function()
+					Recorder.Delete(session.Id)
+				end,
+			},
+		}, true)
+		Root.MouseButton2Click:Connect(Menu.Toggle)
+		Menu:BindLongPress(Root)
+
 		RefreshRow(session)
 		HeaderCount.Text = tostring(#wax.shared.RecordedSessions)
 	end
@@ -408,6 +489,34 @@ return function(props: {
 		RefreshToolbar()
 	end)
 
+	SaveButton.MouseButton1Click:Connect(function()
+		local session = View.Selected
+		if not session then
+			return
+		end
+		if Recorder.Save(session) then
+			wax.shared.Sonner.success("Saved — persists across injections")
+		else
+			wax.shared.Sonner.error("Failed to save session")
+		end
+		RefreshRow(session)
+		RefreshToolbar()
+	end)
+
+	-- committing the name field renames the session (and re-writes its file if already saved)
+	NameBox.FocusLost:Connect(function(enterPressed)
+		local session = View.Selected
+		if not session then
+			return
+		end
+		local text = NameBox.Text
+		if enterPressed and text ~= "" and text ~= session.Name then
+			Recorder.Rename(session, text)
+			RefreshRow(session)
+		end
+		RefreshToolbar()
+	end)
+
 	ExportButton.MouseButton1Click:Connect(function()
 		local session = View.Selected
 		if not session then
@@ -447,7 +556,7 @@ return function(props: {
 			if session then
 				RefreshRow(session)
 				if View.Selected == session then
-					DetailTitle.Text = ("%s  ·  %d events"):format(session.Name, #session.Events)
+					RefreshToolbar()
 				end
 			end
 		elseif kind == "stopped" then
@@ -456,8 +565,15 @@ return function(props: {
 				RenderEvents(session)
 				RefreshToolbar()
 			end
-		elseif kind == "deleted" then
+		elseif kind == "deleted" or kind == "loaded" then
 			RefreshAll()
+		elseif kind == "saved" or kind == "renamed" then
+			if session then
+				RefreshRow(session)
+			end
+			if View.Selected == session then
+				RefreshToolbar()
+			end
 		elseif kind == "play" or kind == "playstopped" then
 			RefreshToolbar()
 		end

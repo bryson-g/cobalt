@@ -168,17 +168,103 @@ function Recorder.Stop()
 	session.EndedAt = os.time()
 	Recorder.Recording = nil
 
-	-- persist so a session survives re-injection / can be read off disk
-	pcall(function()
-		local json = wax.shared.HttpService:JSONEncode(Recorder.SessionToTable(session))
-		FileHelper.new("Cobalt/Sessions"):WriteFile(session.Id .. ".json", json)
-	end)
-
 	if wax.shared.Sonner then
-		wax.shared.Sonner.success(("Recorded %d events — %s"):format(#session.Events, session.Name))
+		wax.shared.Sonner.success(("Recorded %d events — %s (unsaved)"):format(#session.Events, session.Name))
 	end
 	Notify("stopped", session)
 	return session
+end
+
+--// Naming + persistence //------------------------------------------------------------------------
+-- Saving is explicit: a recording lives in memory until you Save it, and only saved sessions come
+-- back on the next injection. Renaming a saved session re-writes its file so the name sticks too.
+
+local SESSION_DIR = "Cobalt/Sessions"
+
+function Recorder.Save(session): boolean
+	if not session then
+		return false
+	end
+	local ok = pcall(function()
+		local json = wax.shared.HttpService:JSONEncode(Recorder.SessionToTable(session))
+		FileHelper.new(SESSION_DIR):WriteFile(session.Id .. ".json", json)
+	end)
+	if ok then
+		session.Saved = true
+		Notify("saved", session)
+	end
+	return ok
+end
+
+function Recorder.Rename(session, name: string): boolean
+	if not session or type(name) ~= "string" or name == "" then
+		return false
+	end
+	session.Name = name
+	if session.Saved then
+		Recorder.Save(session) -- keep the file in step with the rename
+	end
+	Notify("renamed", session)
+	return true
+end
+
+-- Restore previously saved sessions from disk. Their events carry serialised arguments rather than
+-- live call tables, so they're flagged Restored and playback revives them (see BuildRestoredInfo).
+function Recorder.LoadSaved(): number
+	local helper = FileHelper.new(SESSION_DIR)
+	local ok, files = pcall(function()
+		return helper:ListFiles()
+	end)
+	if not ok or type(files) ~= "table" then
+		return 0
+	end
+
+	local loaded = 0
+	for _, file in ipairs(files) do
+		local name = tostring(file)
+		if name:sub(-5) == ".json" then
+			pcall(function()
+				local raw = helper:ReadRawFile(name)
+				local data = wax.shared.HttpService:JSONDecode(raw)
+				if type(data) ~= "table" or not data.id then
+					return
+				end
+				for _, existing in ipairs(Sessions()) do
+					if existing.Id == data.id then
+						return -- already in memory
+					end
+				end
+				local session = {
+					Id = data.id,
+					Name = data.name or "Restored session",
+					StartedAt = data.startedAt or os.time(),
+					StartClock = tick(),
+					EndedAt = data.endedAt or data.startedAt or os.time(),
+					Saved = true,
+					Restored = true,
+					Events = {},
+				}
+				for _, event in ipairs(data.events or {}) do
+					session.Events[#session.Events + 1] = {
+						t = event.t or 0,
+						type = event.direction,
+						name = event.name,
+						class = event.class,
+						path = event.remote,
+						isExecutor = event.isExecutor,
+						args = event.args, -- serialised; revived at playback
+					}
+				end
+				local list = Sessions()
+				list[#list + 1] = session
+				loaded += 1
+			end)
+		end
+	end
+	if loaded > 0 then
+		Notify("loaded", nil)
+	end
+	return loaded
 end
 
 function Recorder.Toggle()
@@ -194,6 +280,11 @@ function Recorder.Delete(id: string): boolean
 		if session.Id == id then
 			if Recorder.Recording == session then
 				Recorder.Recording = nil
+			end
+			if session.Saved then
+				pcall(function()
+					FileHelper.new(SESSION_DIR):DeleteFile(session.Id .. ".json")
+				end)
 			end
 			table.remove(list, index)
 			Notify("deleted", session)
@@ -258,10 +349,94 @@ end
 
 --// Playback //------------------------------------------------------------------------------------
 
+--// Playback helpers //----------------------------------------------------------------------------
+
+-- Walk a GetFullName()-style path back to a live instance ("Workspace.Foo.Bar").
+local function ResolveInstancePath(path: string?): Instance?
+	if type(path) ~= "string" or path == "" then
+		return nil
+	end
+	local node: any = game
+	for segment in path:gmatch("[^%.]+") do
+		node = node:FindFirstChild(segment)
+		if not node then
+			return nil
+		end
+	end
+	return node
+end
+
+-- Turn a serialised argument back into a real value; instance markers resolve to live instances.
+local function ReviveValue(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	if value.__instance then
+		return ResolveInstancePath(value.__instance)
+	end
+	local out = {}
+	for key, inner in pairs(value) do
+		if key ~= "__truncated" then
+			out[key] = ReviveValue(inner)
+		end
+	end
+	return out
+end
+
+-- Build a CallInfo the Classifier/ReplayCallInfo understand, for an event restored from disk (which
+-- has serialised args instead of the original call table). Returns nil if the remote is gone.
+local function BuildRestoredInfo(event)
+	local instance = ResolveInstancePath(event.path)
+	if not instance then
+		return nil
+	end
+	local args = { n = 0 }
+	for index, value in ipairs(event.args or {}) do
+		args[index] = ReviveValue(value)
+		args.n = index
+	end
+	return { Instance = instance, Type = event.type, Arguments = args }
+end
+
+-- Is this event's remote currently on the ignore list? Recording already skips ignored remotes, but a
+-- session captured BEFORE a remote was ignored (or restored from disk) can still contain it — so the
+-- player re-checks, and the ignore list stays the single source of truth for what may fire.
+local function BuildIgnoreMatcher()
+	local keys = {}
+	local AgentAPI = wax.shared.AgentAPI
+	if AgentAPI and AgentAPI.ListIgnored then
+		local ok, list = pcall(AgentAPI.ListIgnored)
+		if ok and type(list) == "table" then
+			for _, key in ipairs(list) do
+				keys[#keys + 1] = key
+			end
+		end
+	end
+
+	return function(event): boolean
+		-- live Log wins when we still have the instance
+		if typeof(event.instance) == "Instance" then
+			local category = wax.shared.Logs[event.type]
+			local log = category and category[event.instance]
+			if log and log.Ignored then
+				return true
+			end
+		end
+		local path, name = event.path or "", event.name or ""
+		for _, key in ipairs(keys) do
+			if key == path or key == name or (key ~= "" and string.find(path, key, 1, true)) then
+				return true
+			end
+		end
+		return false
+	end
+end
+
 --- Replay a session's OUTGOING calls in order.
 --- opts.speed      time multiplier (default 1; 2 = twice as fast)
 --- opts.maxGap     clamp long idle gaps, seconds (default 2)
 --- opts.includeIncoming  also re-fire incoming signals locally (default false)
+--- opts.respectIgnores   skip remotes on the ignore list (default true)
 --- Returns a handle with :Stop(). Firing remotes has real server-side effects — this only runs when
 --- explicitly invoked.
 function Recorder.Play(session, opts)
@@ -277,7 +452,8 @@ function Recorder.Play(session, opts)
 	local includeIncoming = opts.includeIncoming == true
 
 	local CodeGen = require("@src/Utils/CodeGen/Generator")
-	local handle = { Stopped = false, Session = session, Fired = 0, Failed = 0 }
+	local handle = { Stopped = false, Session = session, Fired = 0, Failed = 0, Skipped = 0 }
+	local isIgnored = (opts.respectIgnores ~= false) and BuildIgnoreMatcher() or nil
 
 	function handle:Stop()
 		self.Stopped = true
@@ -302,24 +478,43 @@ function Recorder.Play(session, opts)
 			end
 
 			if event.type == "Outgoing" or (includeIncoming and event.type == "Incoming") then
-				local info = setmetatable({
-					Instance = event.instance,
-					Type = event.type,
-				}, { __index = event.call })
-				local ok = pcall(function()
-					CodeGen:ReplayCallInfo(info)
-				end)
-				if ok then
-					handle.Fired += 1
+				if isIgnored and isIgnored(event) then
+					handle.Skipped += 1
 				else
-					handle.Failed += 1
+					-- live capture keeps the original call (real instance/userdata args); a session
+					-- restored from disk only has serialised args, so revive those instead
+					local info
+					if event.call then
+						info = setmetatable({ Instance = event.instance, Type = event.type }, { __index = event.call })
+					else
+						info = BuildRestoredInfo(event)
+					end
+
+					if not info then
+						handle.Failed += 1
+					else
+						local ok = pcall(function()
+							CodeGen:ReplayCallInfo(info)
+						end)
+						if ok then
+							handle.Fired += 1
+						else
+							handle.Failed += 1
+						end
+					end
 				end
 			end
 		end
 
 		Recorder.Playing = nil
 		if wax.shared.Sonner then
-			wax.shared.Sonner.success(("Playback finished — %d fired, %d failed"):format(handle.Fired, handle.Failed))
+			wax.shared.Sonner.success(
+				("Playback finished — %d fired, %d skipped (ignored), %d failed"):format(
+					handle.Fired,
+					handle.Skipped,
+					handle.Failed
+				)
+			)
 		end
 		Notify("playstopped", session)
 	end)
