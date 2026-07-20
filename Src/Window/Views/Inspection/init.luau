@@ -141,6 +141,7 @@ return function(props: {
 	OnPicked: ((Instance) -> ())?, -- fired on a world pick, so the window can surface this tab
 })
 	local MainFrame = props.MainFrame
+	local ContextMenu = props.ContextMenu
 
 	local View = {
 		Selected = nil,
@@ -469,6 +470,70 @@ return function(props: {
 		return ok and children or {}
 	end
 
+	--// Row actions //-----------------------------------------------------------------------------
+
+	-- Where should the character stand to be "at" this instance? Parts/attachments/models each
+	-- expose their position differently; otherwise fall back to the first positioned descendant.
+	local function TargetPosition(instance): Vector3?
+		local ok, position = pcall(function()
+			if instance:IsA("BasePart") then
+				return instance.Position
+			elseif instance:IsA("Attachment") then
+				return instance.WorldPosition
+			elseif instance:IsA("Model") then
+				return instance:GetPivot().Position
+			end
+			return nil
+		end)
+		if ok and position then
+			return position
+		end
+		local descendant = instance:FindFirstChildWhichIsA("BasePart", true)
+		return descendant and descendant.Position or nil
+	end
+
+	local function TeleportTo(instance)
+		local position = TargetPosition(instance)
+		if not position then
+			wax.shared.Sonner.warning("Nothing to teleport to — that instance has no position")
+			return
+		end
+		local character = wax.shared.LocalPlayer and wax.shared.LocalPlayer.Character
+		if not character then
+			wax.shared.Sonner.error("No character to teleport")
+			return
+		end
+		-- lift slightly so we land on top of the target rather than inside it
+		local ok = pcall(function()
+			character:PivotTo(CFrame.new(position + Vector3.new(0, 4, 0)))
+		end)
+		if ok then
+			wax.shared.Sonner.success(("Teleported to %s"):format(instance.Name))
+		else
+			wax.shared.Sonner.error("Teleport failed")
+		end
+	end
+
+	-- Destroy is client-side only (it won't replicate for server-owned instances). Refuse the cases
+	-- that would break the tool or error anyway.
+	local function CanDelete(instance): (boolean, string?)
+		if instance == game then
+			return false, "can't delete the DataModel"
+		end
+		if instance.Parent == game then
+			return false, "can't delete a service"
+		end
+		local isCobalt = false
+		pcall(function()
+			local screen = wax.shared.ScreenGui
+			isCobalt = screen ~= nil and (instance == screen or instance:IsDescendantOf(screen))
+		end)
+		if isCobalt then
+			return false, "that's Cobalt's own UI"
+		end
+		return true, nil
+	end
+
 	local function MakeRow(entry, order: number)
 		local instance, depth = entry.instance, entry.depth
 		local isSelected = instance == View.Selected
@@ -526,6 +591,61 @@ return function(props: {
 		RowButton.MouseButton1Click:Connect(function()
 			SelectInstance(instance)
 		end)
+
+		local Menu = ContextMenu:Create(RowButton, {
+			{
+				Text = "Teleport to",
+				Icon = "map-pin",
+				Callback = function()
+					SelectInstance(instance)
+					TeleportTo(instance)
+				end,
+			},
+			{
+				Text = "Copy path",
+				Icon = "clipboard",
+				Callback = function()
+					local full
+					pcall(function()
+						full = instance:GetFullName()
+					end)
+					local ok = pcall(setclipboard, tostring(full or instance.Name))
+					if ok then
+						wax.shared.Sonner.success("Copied path")
+					else
+						wax.shared.Sonner.error("Failed to copy path")
+					end
+				end,
+			},
+			{
+				Text = "Delete",
+				Icon = "trash",
+				Callback = function()
+					local allowed, why = CanDelete(instance)
+					if not allowed then
+						wax.shared.Sonner.warning("Not deleted — " .. tostring(why))
+						return
+					end
+					local name = instance.Name
+					local wasSelected = View.Selected == instance
+					local ok = pcall(function()
+						instance:Destroy()
+					end)
+					if not ok then
+						wax.shared.Sonner.error("Failed to delete " .. name)
+						return
+					end
+					if wasSelected then
+						View.Selected = nil
+						RenderDetails(nil)
+					end
+					RenderTree()
+					wax.shared.Sonner.success(("Deleted %s (client-side)"):format(name))
+				end,
+			},
+		}, true)
+		RowButton.MouseButton2Click:Connect(Menu.Toggle)
+		Menu:BindLongPress(RowButton)
 
 		RowByInstance[instance] = RowButton
 		if isSelected then
