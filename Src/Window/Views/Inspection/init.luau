@@ -882,135 +882,191 @@ return function(props: {
 		return true, nil
 	end
 
-	local function MakeRow(entry, order: number)
-		local instance, depth = entry.instance, entry.depth
-		local isSelected = instance == View.Selected
+	local RowPool, ActiveRows = {}, {}
+	local TruncatedLabel
 
-		local RowButton = Interface.New("TextButton", {
-			BackgroundColor3 = isSelected and SELECT_BLUE or SELECTED,
-			BackgroundTransparency = isSelected and 0 or 1,
+	-- Rows are POOLED. Re-rendering used to destroy and rebuild every row, and each row eagerly built
+	-- its own ContextMenu (three option buttons with icons) — thousands of instances per expand click,
+	-- which is where the sluggishness came from. Now a row is built once, reused, and only has its
+	-- properties updated; its menu is created on first right-click and its handlers read the row's
+	-- CURRENT instance, so a recycled row acts on the right thing.
+	local function BuildRow()
+		local rec = {}
+
+		rec.Root = Interface.New("TextButton", {
+			BackgroundColor3 = SELECTED,
+			BackgroundTransparency = 1,
 			Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
-			LayoutOrder = order,
 			Text = "",
-			Parent = Tree,
 
 			["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 		})
 
-		local x = depth * INDENT
-
-		-- expand/collapse chevron (only when the node actually has children)
-		if entry.hasChildren then
-			local Chevron = Interface.New("ImageButton", {
-				BackgroundTransparency = 1,
-				Position = UDim2.new(0, x, 0.5, 0),
-				AnchorPoint = Vector2.new(0, 0.5),
-				Size = UDim2.fromOffset(14, 14),
-				Parent = RowButton,
-			})
-			Icons.SetIcon(Chevron, Expanded[instance] and "chevron-down" or "chevron-right")
-			Chevron.ImageTransparency = 0.35
-			Chevron.MouseButton1Click:Connect(function()
-				Expanded[instance] = not Expanded[instance] or nil
-				RenderTree()
-			end)
-		end
-
-		local Icon = Interface.New("ImageLabel", {
+		rec.Chevron = Interface.New("ImageButton", {
 			BackgroundTransparency = 1,
-			Position = UDim2.new(0, x + 16, 0.5, 0),
+			AnchorPoint = Vector2.new(0, 0.5),
+			Size = UDim2.fromOffset(14, 14),
+			ImageTransparency = 0.35,
+			Visible = false,
+			Parent = rec.Root,
+		})
+
+		rec.Icon = Interface.New("ImageLabel", {
+			BackgroundTransparency = 1,
 			AnchorPoint = Vector2.new(0, 0.5),
 			Size = UDim2.fromOffset(14, 14),
 			ImageTransparency = 0.2,
-			Parent = RowButton,
+			Parent = rec.Root,
 		})
-		Icons.SetIcon(Icon, IconFor(instance))
 
-		local isMatch = SearchMatches ~= nil and SearchMatches[instance] == true
-		Interface.New("TextLabel", {
-			Position = UDim2.new(0, x + 34, 0, 0),
-			Size = UDim2.new(1, -(x + 38), 1, 0),
-			Text = instance.Name,
+		rec.Label = Interface.New("TextLabel", {
 			TextSize = 14,
-			-- while filtering, tint actual hits so they stand out from the ancestor rows drawn for context
-			TextColor3 = isMatch and MATCH_YELLOW or Color3.new(1, 1, 1),
-			TextTransparency = (SearchMatches ~= nil and not isMatch) and 0.35 or 0,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
-			Parent = RowButton,
+			Parent = rec.Root,
 		})
 
-		RowButton.MouseButton1Click:Connect(function()
-			SelectInstance(instance)
+		rec.Root.MouseButton1Click:Connect(function()
+			if rec.Instance then
+				SelectInstance(rec.Instance)
+			end
 		end)
 
-		local Menu = ContextMenu:Create(RowButton, {
-			{
-				Text = "Teleport to",
-				Icon = "map-pin",
-				Callback = function()
-					SelectInstance(instance)
-					TeleportTo(instance)
-				end,
-			},
-			{
-				Text = "Copy path",
-				Icon = "clipboard",
-				Callback = function()
-					local full
-					pcall(function()
-						full = instance:GetFullName()
-					end)
-					local ok = pcall(setclipboard, tostring(full or instance.Name))
-					if ok then
-						wax.shared.Sonner.success("Copied path")
-					else
-						wax.shared.Sonner.error("Failed to copy path")
-					end
-				end,
-			},
-			{
-				Text = "Delete",
-				Icon = "trash",
-				Callback = function()
-					local allowed, why = CanDelete(instance)
-					if not allowed then
-						wax.shared.Sonner.warning("Not deleted — " .. tostring(why))
-						return
-					end
-					local name = instance.Name
-					local wasSelected = View.Selected == instance
-					local ok = pcall(function()
-						instance:Destroy()
-					end)
-					if not ok then
-						wax.shared.Sonner.error("Failed to delete " .. name)
-						return
-					end
-					if wasSelected then
-						View.Selected = nil
-						RenderDetails(nil)
-					end
-					RenderTree()
-					wax.shared.Sonner.success(("Deleted %s (client-side)"):format(name))
-				end,
-			},
-		}, true)
-		RowButton.MouseButton2Click:Connect(Menu.Toggle)
-		Menu:BindLongPress(RowButton)
+		rec.Chevron.MouseButton1Click:Connect(function()
+			local instance = rec.Instance
+			if not instance then
+				return
+			end
+			Expanded[instance] = not Expanded[instance] or nil
+			RenderTree()
+		end)
 
-		RowByInstance[instance] = RowButton
-		if isSelected then
-			SelectedRow = RowButton
+		rec.Root.MouseButton2Click:Connect(function()
+			if not rec.Instance then
+				return
+			end
+			if not rec.Menu then
+				rec.Menu = ContextMenu:Create(rec.Root, {
+					{
+						Text = "Teleport to",
+						Icon = "map-pin",
+						Callback = function()
+							local instance = rec.Instance
+							if not instance then return end
+							SelectInstance(instance)
+							TeleportTo(instance)
+						end,
+					},
+					{
+						Text = "Copy path",
+						Icon = "clipboard",
+						Callback = function()
+							local instance = rec.Instance
+							if not instance then return end
+							local full
+							pcall(function()
+								full = instance:GetFullName()
+							end)
+							if pcall(setclipboard, tostring(full or instance.Name)) then
+								wax.shared.Sonner.success("Copied path")
+							else
+								wax.shared.Sonner.error("Failed to copy path")
+							end
+						end,
+					},
+					{
+						Text = "Delete",
+						Icon = "trash",
+						Callback = function()
+							local instance = rec.Instance
+							if not instance then return end
+							local allowed, why = CanDelete(instance)
+							if not allowed then
+								wax.shared.Sonner.warning("Not deleted — " .. tostring(why))
+								return
+							end
+							local name = instance.Name
+							local wasSelected = View.Selected == instance
+							if not pcall(function() instance:Destroy() end) then
+								wax.shared.Sonner.error("Failed to delete " .. name)
+								return
+							end
+							if wasSelected then
+								View.Selected = nil
+								RenderDetails(nil)
+							end
+							RenderTree()
+							wax.shared.Sonner.success(("Deleted %s (client-side)"):format(name))
+						end,
+					},
+				}, true)
+				rec.Menu:BindLongPress(rec.Root)
+			end
+			rec.Menu.Toggle()
+		end)
+
+		return rec
+	end
+
+	local function ReleaseRows()
+		for _, rec in ipairs(ActiveRows) do
+			rec.Root.Parent = nil
+			rec.Instance = nil
+			RowPool[#RowPool + 1] = rec
 		end
-		return RowButton
+		table.clear(ActiveRows)
+	end
+
+	local function UseRow(entry, order: number)
+		local rec = table.remove(RowPool) or BuildRow()
+		local instance, depth = entry.instance, entry.depth
+		local x = depth * INDENT
+		local isSelected = instance == View.Selected
+
+		rec.Instance = instance
+		rec.Root.LayoutOrder = order
+		rec.Root.BackgroundColor3 = isSelected and SELECT_BLUE or SELECTED
+		rec.Root.BackgroundTransparency = isSelected and 0 or 1
+
+		rec.Chevron.Visible = entry.hasChildren
+		if entry.hasChildren then
+			rec.Chevron.Position = UDim2.new(0, x, 0.5, 0)
+			local want = Expanded[instance] and "chevron-down" or "chevron-right"
+			if rec.ChevronIcon ~= want then -- icon lookups aren't free; only redo them on change
+				rec.ChevronIcon = want
+				Icons.SetIcon(rec.Chevron, want)
+			end
+		end
+
+		rec.Icon.Position = UDim2.new(0, x + 16, 0.5, 0)
+		local iconName = IconFor(instance)
+		if rec.IconName ~= iconName then
+			rec.IconName = iconName
+			Icons.SetIcon(rec.Icon, iconName)
+		end
+
+		local isMatch = SearchMatches ~= nil and SearchMatches[instance] == true
+		rec.Label.Position = UDim2.new(0, x + 34, 0, 0)
+		rec.Label.Size = UDim2.new(1, -(x + 38), 1, 0)
+		rec.Label.Text = instance.Name
+		-- while filtering, tint actual hits so they stand out from the ancestor rows drawn for context
+		rec.Label.TextColor3 = isMatch and MATCH_YELLOW or Color3.new(1, 1, 1)
+		rec.Label.TextTransparency = (SearchMatches ~= nil and not isMatch) and 0.35 or 0
+
+		rec.Root.Parent = Tree
+		ActiveRows[#ActiveRows + 1] = rec
+		RowByInstance[instance] = rec.Root
+		if isSelected then
+			SelectedRow = rec.Root
+		end
+		return rec.Root
 	end
 
 	RenderTree = function()
-		for _, child in ipairs(Tree:GetChildren()) do
-			if child:IsA("TextButton") or child:IsA("TextLabel") then
-				child:Destroy()
-			end
+		ReleaseRows()
+		if TruncatedLabel then
+			TruncatedLabel:Destroy()
+			TruncatedLabel = nil
 		end
 		table.clear(RowByInstance)
 		table.clear(FlatRows)
@@ -1028,7 +1084,7 @@ return function(props: {
 			order += 1
 			local entry = { instance = instance, depth = depth, hasChildren = #children > 0 }
 			FlatRows[order] = entry
-			MakeRow(entry, order)
+			UseRow(entry, order)
 
 			-- while filtering, the path to every hit is force-expanded; otherwise honour the toggles
 			if Expanded[instance] or SearchVisible ~= nil then
@@ -1049,7 +1105,7 @@ return function(props: {
 		walk(game, 0)
 
 		if truncated then
-			Interface.New("TextLabel", {
+			TruncatedLabel = Interface.New("TextLabel", {
 				Text = ("… list truncated (%d rows max)"):format(MAX_ROWS),
 				TextSize = 12,
 				TextTransparency = 0.5,

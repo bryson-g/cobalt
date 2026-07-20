@@ -204,7 +204,7 @@ local InspectionView = require(script.Views.Inspection)({
 	GetDPIScale = GetDPIScale,
 	OnPicked = function()
 		if Switcher then
-			Switcher:Select("Inspect")
+			Switcher:Select("Explorer")
 		end
 	end,
 })
@@ -217,7 +217,7 @@ local SeatsView = require(script.Views.Seats)({
 	SeatSpy = wax.shared.SeatSpy,
 	OnInspect = function(instance)
 		if Switcher then
-			Switcher:Select("Inspect")
+			Switcher:Select("Explorer")
 		end
 		InspectionView.Reveal(instance)
 	end,
@@ -339,12 +339,12 @@ local TabStrip = Interface.New("Frame", {
 local CurrentMode = "Remotes"
 Switcher = require(script.Components.ViewSwitcher)({
 	Parent = TabStrip,
-	Tabs = { "Remotes", "Prompts", "Inspect", "Seats", "Sessions" },
+	Tabs = { "Remotes", "Prompts", "Seats", "Sessions", "Explorer" },
 	OnSelected = function(Name)
 		CurrentMode = Name
 		RemotesRoot.Visible = Name == "Remotes"
 		PromptsRoot.Visible = Name == "Prompts"
-		InspectionRoot.Visible = Name == "Inspect"
+		InspectionRoot.Visible = Name == "Explorer"
 		SeatsRoot.Visible = Name == "Seats"
 		SessionsRoot.Visible = Name == "Sessions"
 	end,
