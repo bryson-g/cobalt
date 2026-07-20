@@ -451,6 +451,8 @@ local function ResolveInstancePath(path: string?): Instance?
 	return node
 end
 
+Recorder.ResolvePath = ResolveInstancePath -- shared so the UI can resolve restored events too
+
 -- Turn a serialised argument back into a real value; instance markers resolve to live instances.
 local function ReviveValue(value)
 	if type(value) ~= "table" then

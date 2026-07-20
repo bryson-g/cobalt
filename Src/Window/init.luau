@@ -228,6 +228,40 @@ local SessionsView = require(script.Views.Sessions)({
 	MainFrame = SessionsRoot,
 	ContextMenu = ContextMenus,
 	Recorder = wax.shared.Recorder,
+	-- "Go to" on a feed row: switch to the tab that event came from, select it there, and scroll to
+	-- it. Restored sessions have no live Instance (only the trigger-time path), so resolve that first.
+	OnGoTo = function(event)
+		local Recorder = wax.shared.Recorder
+		local instance = event.instance
+		if typeof(instance) ~= "Instance" and Recorder and Recorder.ResolvePath then
+			instance = Recorder.ResolvePath(event.path)
+		end
+
+		local kind = event.kind or "remote"
+		local target, revealed = nil, false
+		if kind == "remote" then
+			target = "Remotes"
+			revealed = LogsPage.RevealLog(instance, event.type)
+		elseif kind == "prompt" then
+			target = "Prompts"
+			revealed = PromptsView.Reveal(instance)
+		elseif kind == "seat" then
+			target = "Seats"
+			revealed = SeatsView.Reveal(instance)
+		end
+
+		if revealed then
+			if Switcher and target then
+				Switcher:Select(target)
+			end
+		elseif wax.shared.Sonner then
+			wax.shared.Sonner.warning(
+				("Nothing to go to — %s isn't in this session's capture (restored session?)"):format(
+					tostring(event.name)
+				)
+			)
+		end
+	end,
 })
 Window.Sessions = SessionsView
 

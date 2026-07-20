@@ -23,6 +23,7 @@ return function(props: {
 	local View = { Selected = nil }
 	local SelectedRow = nil
 	local Rows = 0
+	local RowByEvent = {} -- [sit event] = row, so "Go to" can jump straight to one
 
 	--// Layout //---------------------------------------------------------------------------------
 	local Wrapper = Interface.New("Frame", {
@@ -194,6 +195,8 @@ return function(props: {
 			Parent = Row,
 		})
 
+		RowByEvent[event] = Row
+
 		Row.MouseButton1Click:Connect(function()
 			View.Selected = event
 			Select(Row)
@@ -248,8 +251,43 @@ return function(props: {
 		Rows = 0
 		SelectedRow = nil
 		View.Selected = nil
+		table.clear(RowByEvent)
 		HeaderCount.Text = "0"
 		EmptyHint.Visible = true
+	end
+
+	-- rh fork: jump to the most recent sit on a given seat — select it and scroll it into view.
+	-- Used by "Go to" on a Sessions feed row. Matches on the seat instance, so if you sat on the
+	-- same seat repeatedly it lands on the latest one.
+	function View.Reveal(instance): boolean
+		if typeof(instance) ~= "Instance" then
+			return false
+		end
+		local match
+		for _, event in ipairs(wax.shared.SeatLogs or {}) do
+			if event.seat == instance then
+				match = event
+			end
+		end
+		local row = match and RowByEvent[match]
+		if not row then
+			return false
+		end
+
+		View.Selected = match
+		Select(row)
+
+		task.defer(function()
+			pcall(function()
+				wax.shared.RunService.Heartbeat:Wait()
+			end)
+			if not row.Parent then
+				return
+			end
+			local offset = (row.AbsolutePosition.Y - List.AbsolutePosition.Y) + List.CanvasPosition.Y
+			List.CanvasPosition = Vector2.new(0, math.max(0, offset - List.AbsoluteSize.Y / 2))
+		end)
+		return true
 	end
 
 	--// Live //-----------------------------------------------------------------------------------

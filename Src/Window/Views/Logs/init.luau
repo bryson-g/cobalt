@@ -143,6 +143,58 @@ return function(props: {
 	LogsPage.LogList = LogList
 	LogsPage.LogCalls = LogCalls
 
+	-- rh fork: jump to a specific remote — switch to its direction tab, select it, and scroll the
+	-- left list to it. Used by "Go to" on a Sessions feed row. Returns false if that remote has no
+	-- captured Log in this session (e.g. a session restored from disk).
+	function LogsPage.RevealLog(instance: Instance?, direction: string?): boolean
+		if typeof(instance) ~= "Instance" then
+			return false
+		end
+
+		local function findIn(dir)
+			local category = wax.shared.Logs[dir]
+			return category and category[instance] or nil
+		end
+		local resolved = direction
+		local log = direction and findIn(direction) or nil
+		if not log then -- fall back to whichever direction actually holds it
+			for dir in pairs(wax.shared.Logs) do
+				local candidate = findIn(dir)
+				if candidate then
+					log, resolved = candidate, dir
+					break
+				end
+			end
+		end
+		if not log then
+			return false
+		end
+
+		local Tab = LogList.Tabs.Tabs[resolved]
+		if Tab and LogList.CurrentTab ~= Tab then
+			LogList.Tabs:Select(Tab)
+		end
+
+		LogList:EnsureLogButton(log)
+		LogList:RefreshLogButton(log)
+		LogsPage.ShowLog(log)
+
+		-- deferred: the list uses AutomaticCanvasSize, so the canvas isn't measured until next frame
+		task.defer(function()
+			pcall(function()
+				wax.shared.RunService.Heartbeat:Wait()
+			end)
+			local button = log.Button and log.Button.Instance
+			local list = LogList.RemoteList
+			if not button or not button.Parent or not list then
+				return
+			end
+			local offset = (button.AbsolutePosition.Y - list.AbsolutePosition.Y) + list.CanvasPosition.Y
+			list.CanvasPosition = Vector2.new(0, math.max(0, offset - list.AbsoluteSize.Y / 2))
+		end)
+		return true
+	end
+
 	wax.shared.Connect(wax.shared.Communicator.Event:Connect(function(Batch)
 		if typeof(Batch) ~= "table" then
 			return

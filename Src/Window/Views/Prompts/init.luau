@@ -874,6 +874,42 @@ return function(props: {
 	UpdateEmptyState()
 
 	--// Public //----------------------------------------------------------------------------------
+	-- rh fork: jump to a prompt — expand its group, select it, scroll it into view. Used by "Go to"
+	-- on a Sessions feed row. False if this prompt hasn't been captured in this session.
+	function View.Reveal(instance): boolean
+		if typeof(instance) ~= "Instance" then
+			return false
+		end
+		local log = (wax.shared.PromptLogs or {})[instance]
+		if not log then
+			return false
+		end
+
+		EnsureButton(log)
+		RefreshButton(log)
+
+		local group = Groups[log.GroupKey or "__ungrouped"]
+		if group and Collapsed[group.Key] then
+			SetCollapsed(group, false) -- otherwise the row is hidden inside a collapsed group
+		end
+
+		SelectPrompt(log)
+
+		task.defer(function()
+			pcall(function()
+				wax.shared.RunService.Heartbeat:Wait()
+			end)
+			local rec = Buttons[log]
+			local row = rec and rec.Root
+			if not row or not row.Parent then
+				return
+			end
+			local offset = (row.AbsolutePosition.Y - PromptList.AbsolutePosition.Y) + PromptList.CanvasPosition.Y
+			PromptList.CanvasPosition = Vector2.new(0, math.max(0, offset - PromptList.AbsoluteSize.Y / 2))
+		end)
+		return true
+	end
+
 	function View.ClearAll()
 		PromptSpy.Clear(nil)
 		if wax.shared.Sonner then

@@ -19,6 +19,7 @@ return function(props: {
 	MainFrame: GuiObject,
 	ContextMenu: any,
 	Recorder: any,
+	OnGoTo: ((any) -> ())?, -- jump to the tab/entry this event came from
 })
 	local MainFrame = props.MainFrame
 	local ContextMenu = props.ContextMenu
@@ -287,6 +288,16 @@ return function(props: {
 	-- after earlier events are removed and the indices shift.
 	local function EventContextOptions(event)
 		local options = {}
+
+		table.insert(options, {
+			Text = "Go to",
+			Icon = "arrow-right",
+			Callback = function()
+				if props.OnGoTo then
+					props.OnGoTo(event)
+				end
+			end,
+		})
 
 		if (event.kind or "remote") == "remote" then
 			table.insert(options, {
