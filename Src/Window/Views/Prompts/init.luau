@@ -38,6 +38,29 @@ return function(props: {
 	local GroupOrder = 0
 	local Collapsed = {} -- [groupKey] = true while collapsed (session-local)
 
+	-- Recency ordering. UIListLayout sorts by LayoutOrder ascending, so the most recently activated
+	-- item gets the SMALLEST order and floats to the top. One shared counter drives both levels: the
+	-- group rises in the list and, inside it, the prompt that just fired rises to the top of its group
+	-- — so the list reads as an activation history, newest first, at both levels.
+	local Recency = 0
+	local function NextRecency(): number
+		Recency -= 1
+		return Recency
+	end
+
+	-- Float a prompt (and the group containing it) to the top.
+	local function Surface(log)
+		local order = NextRecency()
+		local rec = Buttons[log]
+		if rec then
+			rec.Root.LayoutOrder = order
+		end
+		local group = Groups[log.GroupKey or "__ungrouped"]
+		if group then
+			group.Root.LayoutOrder = order
+		end
+	end
+
 	--// Helpers //---------------------------------------------------------------------------------
 	local function PromptTitle(log): string
 		local instance = log.Instance
@@ -497,7 +520,7 @@ return function(props: {
 			BackgroundTransparency = 1,
 			AutomaticSize = Enum.AutomaticSize.Y,
 			Size = UDim2.new(1, 0, 0, 0),
-			LayoutOrder = GroupOrder,
+			LayoutOrder = NextRecency(), -- newest group on top; re-stamped on every activation
 			Parent = PromptList,
 
 			["UIListLayout"] = {
@@ -650,7 +673,7 @@ return function(props: {
 		local Root = Interface.New("TextButton", {
 			BackgroundColor3 = SELECTED,
 			BackgroundTransparency = 1,
-			LayoutOrder = log.Index or 1,
+			LayoutOrder = NextRecency(), -- newest prompt on top within its group
 			Size = UDim2.new(1, 0, 0, 30),
 			Text = "",
 			Parent = group.Children,
@@ -746,6 +769,7 @@ return function(props: {
 		elseif kind == "activation" then
 			EnsureButton(log)
 			RefreshButton(log)
+			Surface(log) -- float this prompt and its group to the top (most-recent-first)
 			if log == View.CurrentPrompt then
 				AppendActivation(snap)
 			end
@@ -767,6 +791,7 @@ return function(props: {
 				end
 				table.clear(Groups)
 				GroupOrder = 0
+				Recency = 0
 				PromptCount = 0
 				HeaderCount.Text = "0"
 				View.CurrentPrompt = nil
