@@ -298,7 +298,10 @@ return function(props: {
 	})
 
 	--// Details rendering //-----------------------------------------------------------------------
+	local ClosePicker -- defined with the property editors below; ClearDetails calls it
+
 	local function ClearDetails()
+		ClosePicker() -- a popup anchored to a row we're about to destroy would be orphaned
 		for _, child in ipairs(Details:GetChildren()) do
 			if child:IsA("Frame") then
 				child:Destroy()
@@ -335,6 +338,304 @@ return function(props: {
 		})
 
 		return Block
+	end
+
+	--// Property editing //-------------------------------------------------------------------------
+	-- Luau can't tell writable from read-only without an API dump, so rather than probing by writing
+	-- (which would fire side effects), the handful of read-only names in our curated lists are listed
+	-- here. Anything else gets an editor, and every write is pcall'd so a rejected assignment surfaces
+	-- as a toast instead of an error.
+	local READ_ONLY = {
+		ClassName = true,
+		TimeLength = true,
+		AbsolutePosition = true,
+		AbsoluteSize = true,
+	}
+
+	local ActivePicker -- { Popup, Backdrop } — only one colour picker open at a time
+
+	ClosePicker = function()
+		if not ActivePicker then
+			return
+		end
+		pcall(function()
+			ActivePicker.Popup:Destroy()
+			ActivePicker.Backdrop:Destroy()
+		end)
+		ActivePicker = nil
+	end
+
+	local RenderDetailsRef -- assigned below; edits re-render so dependent values update
+
+	local function ApplyProperty(instance, name: string, value): boolean
+		local ok, err = pcall(function()
+			instance[name] = value
+		end)
+		if ok then
+			if RenderDetailsRef then
+				RenderDetailsRef(instance)
+			end
+		else
+			wax.shared.Sonner.error(("Couldn't set %s — %s"):format(name, tostring(err)))
+		end
+		return ok
+	end
+
+	-- "1, 2, 3" -> { 1, 2, 3 }; nil if fewer than `count` numbers were given
+	local function ParseNumbers(text: string, count: number): { number }?
+		local numbers = {}
+		for piece in tostring(text):gmatch("[^,%s]+") do
+			numbers[#numbers + 1] = tonumber(piece)
+		end
+		for index = 1, count do
+			if numbers[index] == nil then
+				return nil
+			end
+		end
+		return numbers
+	end
+
+	local function EditorHolder(row)
+		return Interface.New("Frame", {
+			BackgroundColor3 = Color3.fromRGB(34, 34, 34),
+			Position = UDim2.new(0.38, 0, 0, 0),
+			Size = UDim2.new(0.62, 0, 0, 18),
+			Parent = row,
+
+			["UICorner"] = { CornerRadius = UDim.new(0, 3) },
+		})
+	end
+
+	local function TextEditor(holder, text: string, commit: (string) -> ())
+		local Box = Interface.New("TextBox", {
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			Text = text,
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			ClearTextOnFocus = false,
+			Parent = holder,
+
+			["UIPadding"] = { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) },
+		})
+		Box.FocusLost:Connect(function(enterPressed)
+			if enterPressed then
+				commit(Box.Text)
+			end
+		end)
+		return Box
+	end
+
+	local function ButtonEditor(holder, text: string)
+		return Interface.New("TextButton", {
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			Text = text,
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = holder,
+
+			["UIPadding"] = { PaddingLeft = UDim.new(0, 6) },
+		})
+	end
+
+	-- Swatch grid over the 128 BrickColor palette entries, which doubles as the Color3 picker (a full
+	-- HSV wheel is overkill here; the palette is what these properties are usually set from anyway).
+	local function OpenPalette(anchor, onPick: (BrickColor) -> ())
+		ClosePicker()
+		local screen = wax.shared.ScreenGui
+		local origin = screen.AbsolutePosition
+
+		local Backdrop = Interface.New("TextButton", {
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			Text = "",
+			ZIndex = 3999,
+			Parent = screen,
+		})
+
+		local Popup = Interface.New("Frame", {
+			BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+			Size = UDim2.fromOffset(190, 200),
+			Position = UDim2.fromOffset(
+				anchor.AbsolutePosition.X - origin.X,
+				anchor.AbsolutePosition.Y - origin.Y + 22
+			),
+			ZIndex = 4000,
+			Parent = screen,
+
+			["UICorner"] = { CornerRadius = UDim.new(0, 6) },
+			["UIStroke"] = { Color = Color3.fromRGB(70, 70, 70) },
+			["UIPadding"] = {
+				PaddingLeft = UDim.new(0, 6),
+				PaddingRight = UDim.new(0, 6),
+				PaddingTop = UDim.new(0, 6),
+				PaddingBottom = UDim.new(0, 6),
+			},
+		})
+
+		local Grid = Interface.New("ScrollingFrame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			CanvasSize = UDim2.new(0, 0, 0, 0),
+			ScrollBarThickness = 2,
+			ZIndex = 4001,
+			Parent = Popup,
+
+			["UIGridLayout"] = {
+				CellSize = UDim2.fromOffset(19, 19),
+				CellPadding = UDim2.fromOffset(3, 3),
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			},
+		})
+
+		for index = 0, 127 do
+			local brick = BrickColor.palette(index)
+			local Swatch = Interface.New("TextButton", {
+				BackgroundColor3 = brick.Color,
+				Size = UDim2.fromOffset(19, 19),
+				LayoutOrder = index,
+				Text = "",
+				ZIndex = 4002,
+				Parent = Grid,
+
+				["UICorner"] = { CornerRadius = UDim.new(0, 3) },
+			})
+			Swatch.MouseButton1Click:Connect(function()
+				onPick(brick)
+				ClosePicker()
+			end)
+		end
+
+		Backdrop.MouseButton1Click:Connect(ClosePicker)
+		ActivePicker = { Popup = Popup, Backdrop = Backdrop }
+	end
+
+	-- Build the right editor for the value's type. Returns false when the type isn't editable here.
+	local function BuildEditor(row, instance, name: string, value): boolean
+		local valueType = typeof(value)
+
+		if valueType == "boolean" then
+			local holder = EditorHolder(row)
+			local button = ButtonEditor(holder, value and "true" or "false")
+			button.MouseButton1Click:Connect(function()
+				ApplyProperty(instance, name, not value)
+			end)
+			return true
+		elseif valueType == "number" then
+			local holder = EditorHolder(row)
+			TextEditor(holder, tostring(round(value)), function(text)
+				local parsed = tonumber(text)
+				if parsed == nil then
+					wax.shared.Sonner.warning(name .. " expects a number")
+					return
+				end
+				ApplyProperty(instance, name, parsed)
+			end)
+			return true
+		elseif valueType == "string" then
+			local holder = EditorHolder(row)
+			TextEditor(holder, value, function(text)
+				ApplyProperty(instance, name, text)
+			end)
+			return true
+		elseif valueType == "EnumItem" then
+			local holder = EditorHolder(row)
+			local button = ButtonEditor(holder, value.Name .. "  ▾")
+			local menu
+			button.MouseButton1Click:Connect(function()
+				if not menu then
+					local options = {}
+					for _, item in ipairs(value.EnumType:GetEnumItems()) do
+						options[#options + 1] = {
+							Text = item.Name,
+							Callback = function()
+								ApplyProperty(instance, name, item)
+							end,
+						}
+					end
+					menu = ContextMenu:Create(button, options, true, { MaxHeight = 220 })
+				end
+				menu.Toggle()
+			end)
+			return true
+		elseif valueType == "BrickColor" or valueType == "Color3" then
+			local isBrick = valueType == "BrickColor"
+			local colour = isBrick and value.Color or value
+			local holder = EditorHolder(row)
+			local Swatch = Interface.New("TextButton", {
+				BackgroundColor3 = colour,
+				Position = UDim2.fromOffset(3, 2),
+				Size = UDim2.fromOffset(14, 14),
+				Text = "",
+				Parent = holder,
+				["UICorner"] = { CornerRadius = UDim.new(0, 3) },
+			})
+			local label = ButtonEditor(holder, "")
+			label.Position = UDim2.fromOffset(20, 0)
+			label.Size = UDim2.new(1, -20, 1, 0)
+			label.Text = isBrick and value.Name
+				or ("%d, %d, %d"):format(colour.R * 255, colour.G * 255, colour.B * 255)
+
+			local function pick()
+				OpenPalette(Swatch, function(brick)
+					ApplyProperty(instance, name, isBrick and brick or brick.Color)
+				end)
+			end
+			Swatch.MouseButton1Click:Connect(pick)
+			label.MouseButton1Click:Connect(pick)
+			return true
+		elseif valueType == "Vector3" or valueType == "Vector2" then
+			local count = valueType == "Vector3" and 3 or 2
+			local holder = EditorHolder(row)
+			TextEditor(holder, FormatValue(value), function(text)
+				local n = ParseNumbers(text, count)
+				if not n then
+					wax.shared.Sonner.warning(("%s expects %d numbers"):format(name, count))
+					return
+				end
+				ApplyProperty(instance, name, count == 3 and Vector3.new(n[1], n[2], n[3]) or Vector2.new(n[1], n[2]))
+			end)
+			return true
+		elseif valueType == "UDim2" then
+			local holder = EditorHolder(row)
+			TextEditor(holder, FormatValue(value), function(text)
+				local n = ParseNumbers(text, 4)
+				if not n then
+					wax.shared.Sonner.warning(name .. " expects scaleX, offsetX, scaleY, offsetY")
+					return
+				end
+				ApplyProperty(instance, name, UDim2.new(n[1], n[2], n[3], n[4]))
+			end)
+			return true
+		elseif valueType == "UDim" then
+			local holder = EditorHolder(row)
+			TextEditor(holder, FormatValue(value), function(text)
+				local n = ParseNumbers(text, 2)
+				if not n then
+					wax.shared.Sonner.warning(name .. " expects scale, offset")
+					return
+				end
+				ApplyProperty(instance, name, UDim.new(n[1], n[2]))
+			end)
+			return true
+		elseif valueType == "CFrame" then
+			-- position only; the existing rotation is preserved so this can't silently un-rotate things
+			local holder = EditorHolder(row)
+			TextEditor(holder, FormatValue(value), function(text)
+				local n = ParseNumbers(text, 3)
+				if not n then
+					wax.shared.Sonner.warning(name .. " expects x, y, z")
+					return
+				end
+				local rotation = value - value.Position
+				ApplyProperty(instance, name, CFrame.new(n[1], n[2], n[3]) * rotation)
+			end)
+			return true
+		end
+
+		return false -- instances, and anything exotic, stay read-only
 	end
 
 	local function Row(parent, label: string, value: string, order: number)
@@ -409,7 +710,29 @@ return function(props: {
 						if okRead then
 							order += 1
 							any = true
-							Row(propsBlock, name, FormatValue(value), order)
+							if READ_ONLY[name] then
+								Row(propsBlock, name, FormatValue(value), order)
+							else
+								-- editable when we have an editor for the type; otherwise plain text
+								local editRow = Interface.New("Frame", {
+									BackgroundTransparency = 1,
+									Size = UDim2.new(1, 0, 0, 18),
+									LayoutOrder = order,
+									Parent = propsBlock,
+								})
+								Interface.New("TextLabel", {
+									Text = name,
+									TextSize = 14,
+									TextTransparency = 0.45,
+									Size = UDim2.new(0.38, -4, 0, 18),
+									TextXAlignment = Enum.TextXAlignment.Left,
+									Parent = editRow,
+								})
+								if not BuildEditor(editRow, instance, name, value) then
+									editRow:Destroy()
+									Row(propsBlock, name, FormatValue(value), order)
+								end
+							end
 						end
 					end
 				end
@@ -444,6 +767,8 @@ return function(props: {
 			Row(block, "CollectionService", table.concat(tags, ", "), 1)
 		end
 	end
+
+	RenderDetailsRef = RenderDetails -- property edits re-render the pane
 
 	--// Tree rendering //--------------------------------------------------------------------------
 	local RenderTree
