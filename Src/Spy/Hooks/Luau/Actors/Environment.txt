@@ -2216,15 +2216,32 @@ do
 			else not self.Ignored and Decision.FilterAction ~= "Ignore"
 
 		if not ShouldCapture then
-			-- rh fork: a recording still wants ignored traffic, marked as such, so a session is a complete
-			-- picture of what happened rather than only what survived the filters. It's handed straight to
-			-- the recorder and still kept out of the log store and the UI, exactly as before.
+			-- rh fork: suppressed traffic is still wanted in two cases — a recording (so a session is the
+			-- complete picture) and the Remotes view's "show ignored" toggle. Both are opt-in: with neither
+			-- active this stays the original zero-cost early return, so ignoring a spammy remote is still
+			-- free. Either way the call is flagged WasIgnored so it can be told apart downstream.
 			if not wax.shared.IS_ACTOR then
 				local Recorder = wax.shared.Recorder
-				if Recorder and Recorder.IsRecording() then
+				local ShowIgnored = wax.shared.CaptureIgnored == true
+				local Recording = Recorder ~= nil and Recorder.IsRecording()
+
+				if ShowIgnored or Recording then
 					local IgnoredInfo = DeepClone(RawInfo)
 					IgnoredInfo.CreationTime = tick()
-					pcall(Recorder.CaptureIgnored, self, IgnoredInfo)
+					IgnoredInfo.WasIgnored = true
+
+					if ShowIgnored then
+						-- store + notify like a normal call so the view renders it; the recorder then picks
+						-- it up off the same notification (reading WasIgnored), rather than double-capturing
+						local Index = #self.Calls + 1
+						self.Calls[Index] = IgnoredInfo
+						if not IgnoredInfo.IsExecutor then
+							table.insert(self.GameCalls, Index)
+						end
+						QueueNotification(self, Index)
+					elseif Recording then
+						pcall(Recorder.CaptureIgnored, self, IgnoredInfo)
+					end
 				end
 			end
 			return nil

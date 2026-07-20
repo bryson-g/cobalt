@@ -426,6 +426,8 @@ return function(props: {
 		end
 
 		local IsBlockedCall = CallInfo.Blocked == true
+		-- rh fork: captured only while "show ignored" is on; flagged so it reads as suppressed traffic
+		local IsIgnoredCall = CallInfo.WasIgnored == true
 		local IsHighlightedCall = not IsBlockedCall and CallInfo.Highlighted == true
 		local CallFrame = self:AcquireCallFrame()
 		local Data = self.CallFrameData[CallFrame]
@@ -434,7 +436,10 @@ return function(props: {
 		Data.IsBlockedCall = IsBlockedCall
 		Data.IsHighlightedCall = IsHighlightedCall
 
-		CallFrame.BackgroundColor3 = if IsBlockedCall then Color3.fromRGB(34, 18, 18) else Color3.fromRGB(25, 25, 25)
+		CallFrame.BackgroundColor3 = if IsBlockedCall
+			then Color3.fromRGB(34, 18, 18)
+			elseif IsIgnoredCall then Color3.fromRGB(32, 22, 22)
+			else Color3.fromRGB(25, 25, 25)
 		CallFrame.LayoutOrder = CallInfo.Order
 		Data.HighlightStroke.Color = if IsBlockedCall
 			then Color3.fromRGB(222, 82, 82)
@@ -514,6 +519,9 @@ return function(props: {
 			or CallInfo.IsRakNet and "RakNet"
 			or CallInfo.Origin and CallInfo.Origin.Name
 			or "Unknown"
+		if IsIgnoredCall then
+			OriginText = "⊘ " .. OriginText .. " (ignored)"
+		end
 		local OriginIcon
 		if IsBlockedCall then
 			OriginIcon = Interface.NewIcon("ban", {
@@ -556,7 +564,9 @@ return function(props: {
 				Size = UDim2.new(0.5, -24, 0, 22),
 				BackgroundTransparency = 1,
 				Text = if IsBlockedCall then `{OriginText} (Blocked)` else OriginText,
-				TextColor3 = if IsBlockedCall then Color3.fromRGB(255, 190, 190) else Color3.new(1, 1, 1),
+				TextColor3 = if IsBlockedCall or IsIgnoredCall
+					then Color3.fromRGB(255, 150, 150)
+					else Color3.new(1, 1, 1),
 				TextSize = 16,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				TextTransparency = 0.5,

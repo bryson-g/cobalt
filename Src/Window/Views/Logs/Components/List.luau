@@ -39,7 +39,7 @@ return function(props: {
 
 	local RemoteTabContainer = Interface.New("Frame", {
 		BackgroundColor3 = Color3.fromRGB(25, 25, 25),
-		Size = UDim2.new(1, 0, 0, 30),
+		Size = UDim2.new(1, -34, 0, 30), -- room for the show-ignored toggle beside it
 		Parent = LeftList,
 
 		["UICorner"] = {
@@ -50,6 +50,24 @@ return function(props: {
 			FillDirection = Enum.FillDirection.Horizontal,
 			HorizontalAlignment = Enum.HorizontalAlignment.Left,
 			HorizontalFlex = Enum.UIFlexAlignment.Fill,
+		},
+	})
+
+	-- rh fork: show-ignored toggle. This controls CAPTURE, not just display — a suppressed call is
+	-- never stored, so there'd be nothing to reveal after the fact. Off by default so ignoring a
+	-- spammy remote stays free; turning it off again drops what was captured while it was on.
+	local ShowIgnoredButton = Interface.New("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundColor3 = Color3.fromRGB(25, 25, 25),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.fromOffset(30, 30),
+		Text = "⊘",
+		TextSize = 15,
+		TextTransparency = 0.5,
+		Parent = LeftList,
+
+		["UICorner"] = {
+			CornerRadius = UDim.new(0, 4),
 		},
 	})
 
@@ -252,6 +270,9 @@ return function(props: {
 
 		Log.Button.Name.Text = Log.Instance.Name
 		Log.Button.Calls.Text = "x" .. #Log.Calls
+		local IgnoredTint = Log.Ignored and Color3.fromRGB(230, 110, 110) or Color3.new(1, 1, 1)
+		Log.Button.Name.TextColor3 = IgnoredTint
+		Log.Button.Calls.TextColor3 = IgnoredTint
 		UpdateLogNameSize(Log)
 
 		Log.Button.Instance.Parent = if #Log.Calls == 0 then nil else RemoteList
@@ -303,6 +324,46 @@ return function(props: {
 			self:RefreshLogButton(Log)
 		end
 	end
+
+	local function SetShowIgnored(Enabled: boolean)
+		wax.shared.CaptureIgnored = Enabled
+		ShowIgnoredButton.TextTransparency = Enabled and 0 or 0.5
+		ShowIgnoredButton.TextColor3 = Enabled and Color3.fromRGB(230, 110, 110) or Color3.new(1, 1, 1)
+		ShowIgnoredButton.BackgroundColor3 = Enabled and Color3.fromRGB(60, 30, 30) or Color3.fromRGB(25, 25, 25)
+
+		if not Enabled then
+			-- drop what was captured while it was on, so the view returns to real traffic only
+			for _, Category in pairs(wax.shared.Logs or {}) do
+				for _, Log in pairs(Category) do
+					local Kept, KeptGame = {}, {}
+					for _, Call in ipairs(Log.Calls) do
+						if not Call.WasIgnored then
+							Kept[#Kept + 1] = Call
+							if not Call.IsExecutor then
+								KeptGame[#KeptGame + 1] = #Kept
+							end
+						end
+					end
+					Log.Calls = Kept
+					Log.GameCalls = KeptGame
+					List:QueueLogButtonUpdate(Log)
+				end
+			end
+			LogsPage.CleanLogsList()
+			local Current = LogsPage.GetCurrentLog()
+			if Current then
+				LogsPage.ShowLog(Current)
+			end
+		end
+
+		if wax.shared.Sonner then
+			wax.shared.Sonner.info(Enabled and "Capturing ignored remotes" or "Ignored remotes hidden again")
+		end
+	end
+
+	ShowIgnoredButton.MouseButton1Click:Connect(function()
+		SetShowIgnored(not (wax.shared.CaptureIgnored == true))
+	end)
 
 	local Tabs = DirectionTabs({
 		Parent = RemoteTabContainer,

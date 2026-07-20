@@ -449,7 +449,8 @@ local function OnBatch(batch)
 					class = log.Instance.ClassName,
 					path = path or log.Instance.Name,
 					isExecutor = call.IsExecutor or false,
-					ignored = false,
+					-- set when "show ignored" stored a suppressed call through the normal path
+					ignored = call.WasIgnored == true,
 				})
 			end
 		end
