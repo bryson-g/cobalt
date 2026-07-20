@@ -55,8 +55,16 @@ local GENERIC_MODEL_NAMES = { Model = true, Models = true, Parts = true, Meshes 
 -- Open/Close/Turn On/…) collapse into one row. Resolved AT TRIGGER TIME on purpose: games reparent
 -- prompts to nil once used, and once detached the ancestry is gone entirely (GetFullName then returns
 -- a bare "ProximityPrompt"), so resolving this lazily at render time would lose every group.
---   1) nearest ancestor Model with a meaningful name  -> "Dryer", "Photocopier", "Mini Fridge"
+--   1) the TOPMOST meaningfully-named Model in the contiguous run of Model ancestors
 --   2) else the outermost container under the service -> "Office", "MorningBathroom"
+--
+-- Why the topmost of the run and not the nearest: objects nest sub-part Models inside themselves, e.g.
+--   Dryer(Model) / scripted(Model) / door(Model) / Main / Attachment / ProximityPrompt
+-- Taking the NEAREST Model groups by "door" and "scripted" — two rows for one dryer. Ascending the
+-- contiguous run lands on "Dryer" for every prompt on that object. The run stops at the first
+-- non-Model (a Folder like MorningBathroom / Office), which prevents swallowing a whole area, and
+-- generically-named wrappers are skipped as candidates — important because that generic "Model" node
+-- is often the one holding several distinct appliances.
 local function ResolveGroup(prompt): Instance?
 	local chain = {}
 	local node = prompt.Parent
@@ -64,11 +72,22 @@ local function ResolveGroup(prompt): Instance?
 		chain[#chain + 1] = node
 		node = node.Parent
 	end
-	for _, ancestor in ipairs(chain) do
-		if ancestor.ClassName == "Model" and not GENERIC_MODEL_NAMES[ancestor.Name] then
-			return ancestor
+
+	local best, inRun = nil, false
+	for _, ancestor in ipairs(chain) do -- nearest -> outermost
+		if ancestor.ClassName == "Model" then
+			inRun = true
+			if not GENERIC_MODEL_NAMES[ancestor.Name] then
+				best = ancestor -- keep climbing; the last one assigned is the topmost
+			end
+		elseif inRun then
+			break -- left the contiguous Model run (hit a Folder/service boundary)
 		end
 	end
+	if best then
+		return best
+	end
+
 	-- chain ends at the service (Workspace); the entry before it is the top-level container
 	return chain[#chain - 1] or chain[#chain]
 end
