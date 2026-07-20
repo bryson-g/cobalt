@@ -62,19 +62,21 @@ return function(props: {
 	end
 
 	--// Helpers //---------------------------------------------------------------------------------
+	-- Label from the LAST FIRING rather than the live instance: games reuse one prompt for different
+	-- actions, so the live ActionText may already have been re-purposed since it last fired and would
+	-- mislabel the row. Falls back to the live instance only when we've captured nothing yet.
 	local function PromptTitle(log): string
 		local instance = log.Instance
 		local name
-		pcall(function()
-			name = instance.ActionText
-		end)
+		local acts = log.Activations
+		local latest = acts[#acts]
+		if latest and latest.actionText and latest.actionText ~= "" then
+			name = latest.actionText
+		end
 		if not name or name == "" then
-			-- fall back to the newest snapshot, then the instance name
-			local acts = log.Activations
-			local latest = acts[#acts]
-			if latest and latest.actionText and latest.actionText ~= "" then
-				name = latest.actionText
-			end
+			pcall(function()
+				name = instance.ActionText
+			end)
 		end
 		if not name or name == "" then
 			pcall(function()
@@ -253,6 +255,24 @@ return function(props: {
 		},
 	})
 
+	-- Detail header: path, plus a callout when this one instance has fired as several different
+	-- actions, listing each label so the history above it can be read correctly.
+	local function DetailHeaderText(log): string
+		local path = PromptPath(log)
+		local variants = log.Variants
+		if not variants or #variants < 2 then
+			return path
+		end
+		local labels = {}
+		for _, variant in ipairs(variants) do
+			labels[#labels + 1] = ("%s (x%d)"):format(
+				(variant.actionText ~= nil and variant.actionText ~= "") and variant.actionText or "?",
+				variant.count
+			)
+		end
+		return ("%s  —  reused for %d actions: %s"):format(path, #variants, table.concat(labels, ", "))
+	end
+
 	--// Rendering //-------------------------------------------------------------------------------
 	local function UpdateEmptyState()
 		EmptyHint.Visible = PromptCount == 0
@@ -374,7 +394,21 @@ return function(props: {
 			KV(Details, label, tostring(value), o)
 		end
 
+		-- Lead with the change: this firing meant something different than the one before it, which is
+		-- the detail that's easy to miss when every row shares one instance.
+		if snap.changed then
+			o += 1
+			KV(
+				Details,
+				"⚠ changed from",
+				(snap.previousActionText ~= nil and snap.previousActionText ~= "") and snap.previousActionText
+					or "(no text)",
+				o
+			)
+		end
+
 		Add("Object text", snap.objectText)
+		Add("Style", snap.style)
 		if snap.holdDuration ~= nil then
 			Add("Hold", snap.holdDuration > 0 and string.format("%.2gs", snap.holdDuration) or "instant")
 		end
@@ -389,6 +423,22 @@ return function(props: {
 			Add("Enabled", snap.enabled and "yes" or "no")
 		end
 		Add("Player", snap.player)
+
+		-- Attributes/tags are where games park the state that drives a prompt's current meaning, so
+		-- they're the evidence for WHY this firing differed from the last.
+		if snap.tags then
+			Add("Tags", table.concat(snap.tags, ", "))
+		end
+		if snap.attributes then
+			local keys = {}
+			for key in pairs(snap.attributes) do
+				keys[#keys + 1] = key
+			end
+			table.sort(keys)
+			for _, key in ipairs(keys) do
+				Add("attr: " .. key, tostring(snap.attributes[key]))
+			end
+		end
 
 		-- full path on its own wrapped row
 		if snap.path then
@@ -486,7 +536,7 @@ return function(props: {
 				:Play()
 		end
 
-		DetailHeader.Text = log and PromptPath(log) or "Select a prompt to see its activations"
+		DetailHeader.Text = log and DetailHeaderText(log) or "Select a prompt to see its activations"
 		RenderActivations(log)
 	end
 
@@ -660,6 +710,14 @@ return function(props: {
 		rec.Count.TextTransparency = dim and 0.55 or 0.2
 		rec.Icon.ImageTransparency = dim and 0.6 or 0.15
 
+		-- Flag a prompt that has fired with more than one action text — same instance, different
+		-- meanings — so the single row label isn't taken at face value.
+		local reused = log.Variants and #log.Variants > 1
+		if reused ~= rec.Reused then
+			rec.Reused = reused
+			Icons.SetIcon(rec.Icon, reused and "repeat" or "mouse-pointer-click")
+		end
+
 		local group = Groups[log.GroupKey or "__ungrouped"]
 		if group then
 			RefreshGroupCount(group)
@@ -773,9 +831,9 @@ return function(props: {
 			if log == View.CurrentPrompt then
 				AppendActivation(snap)
 			end
-			-- keep the detail header's path fresh as new snapshots arrive
+			-- keep the detail header fresh as new snapshots arrive (path + reuse callout)
 			if log == View.CurrentPrompt then
-				DetailHeader.Text = PromptPath(log)
+				DetailHeader.Text = DetailHeaderText(log)
 			end
 			UpdateEmptyState()
 		elseif kind == "ignore" then

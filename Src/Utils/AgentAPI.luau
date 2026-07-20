@@ -475,15 +475,28 @@ function AgentAPI.GetPrompts(opts): { any }
 			continue
 		end
 		local key = RemoteKey(instance)
-		local name = PromptName(instance)
-		if
-			nameFilter
-			and not (
-				string.find(string.lower(name), nameFilter, 1, true)
+		local latest = log.Activations[total]
+		-- Label from the LAST FIRING, not the live instance: a reused prompt may already have been
+		-- re-purposed since it last fired, which would mislabel the whole history.
+		local name = (latest and latest.actionText ~= nil and latest.actionText ~= "" and latest.actionText)
+			or PromptName(instance)
+
+		if nameFilter then
+			local hit = string.find(string.lower(name), nameFilter, 1, true)
 				or string.find(string.lower(key), nameFilter, 1, true)
-			)
-		then
-			continue
+			-- also match labels it fired with previously, so searching an older action text still
+			-- finds a prompt that has since been re-purposed
+			if not hit then
+				for _, variant in ipairs(log.Variants or {}) do
+					if variant.actionText and string.find(string.lower(variant.actionText), nameFilter, 1, true) then
+						hit = true
+						break
+					end
+				end
+			end
+			if not hit then
+				continue
+			end
 		end
 
 		local activations = {}
@@ -499,14 +512,34 @@ function AgentAPI.GetPrompts(opts): { any }
 					holdDuration = a.holdDuration,
 					maxDistance = a.maxDistance,
 					keyCode = a.keyCode,
+					enabled = a.enabled,
+					style = a.style,
+					attributes = a.attributes,
+					tags = a.tags,
+					variantIndex = a.variantIndex,
+					changed = a.changed or nil, -- true = meant something different than the firing before it
+					previousActionText = a.previousActionText,
 					path = a.path,
 				}
 			end
 		end
 
+		-- Distinct states this prompt has fired with. reused/variantCount > 1 means the SAME instance
+		-- was re-purposed for different actions over time — in that case read the per-activation
+		-- actionText, never just `name`, or you'll attribute every firing to the latest label.
+		local variants = {}
+		for _, variant in ipairs(log.Variants or {}) do
+			variants[#variants + 1] = {
+				actionText = variant.actionText,
+				objectText = variant.objectText,
+				count = variant.count,
+				first = variant.first,
+				last = variant.last,
+			}
+		end
+
 		-- Prefer the path captured at TRIGGER time: games reparent prompts to nil once used, and a
 		-- detached instance's GetFullName() collapses to a bare "ProximityPrompt" with no ancestry.
-		local latest = log.Activations[total]
 		local path = (latest and latest.path) or key
 
 		out[#out + 1] = {
@@ -517,6 +550,9 @@ function AgentAPI.GetPrompts(opts): { any }
 			groupKey = log.GroupKey,
 			ignored = log.Ignored or false,
 			activationCount = total,
+			reused = #variants > 1, -- same instance fired with different meanings; see `variants`
+			variantCount = #variants,
+			variants = variants,
 			activations = activations,
 		}
 	end

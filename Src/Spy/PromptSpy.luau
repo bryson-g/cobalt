@@ -143,10 +143,44 @@ function PromptSpy.EnsureLog(prompt)
 	return log
 end
 
+-- Attributes/tags are where games park per-object state, and they're the usual reason a prompt's
+-- meaning changes between firings — capture them per activation, flattened to JSON-safe scalars.
+local function ScalarAttributes(instance): { [string]: any }?
+	local ok, attrs = pcall(function()
+		return instance:GetAttributes()
+	end)
+	if not ok or type(attrs) ~= "table" then
+		return nil
+	end
+	local out, n = {}, 0
+	for key, value in pairs(attrs) do
+		local t = typeof(value)
+		out[key] = (t == "string" or t == "number" or t == "boolean") and value or tostring(value)
+		n += 1
+		if n >= 24 then
+			break
+		end
+	end
+	return n > 0 and out or nil
+end
+
+local function InstanceTags(instance): { string }?
+	local ok, tags = pcall(function()
+		return game:GetService("CollectionService"):GetTags(instance)
+	end)
+	if ok and type(tags) == "table" and #tags > 0 then
+		return tags
+	end
+	return nil
+end
+
 -- Snapshot the prompt's state at trigger time (properties can change or the prompt can be destroyed
 -- later, so we copy what we care about now). Every read is pcall-guarded against a nil-parented ref.
 local function Snapshot(prompt, player)
 	local snap = { time = os.time(), clock = tick() }
+	snap.attributes = ScalarAttributes(prompt)
+	snap.tags = InstanceTags(prompt)
+	pcall(function() snap.style = prompt.Style and prompt.Style.Name end)
 	pcall(function() snap.actionText = prompt.ActionText end)
 	pcall(function() snap.objectText = prompt.ObjectText end)
 	pcall(function() snap.holdDuration = prompt.HoldDuration end)
@@ -188,6 +222,44 @@ local function OnTriggered(prompt, player)
 	end
 
 	local snap = Snapshot(prompt, player)
+
+	-- Reused prompts: games re-purpose one ProximityPrompt instance instead of spawning a new one, so
+	-- the SAME instance fires with different ActionText/ObjectText at different times. The row label
+	-- alone is then ambiguous ("this prompt" meant two different actions). Track the distinct states it
+	-- has fired with, and mark the activation where the meaning changed, so a later reader can tell the
+	-- firings apart instead of having to diff snapshots by hand.
+	local signature = (snap.actionText or "") .. "\30" .. (snap.objectText or "")
+	log.Variants = log.Variants or {}
+	local variant, variantIndex
+	for index, existing in ipairs(log.Variants) do
+		if existing.signature == signature then
+			variant, variantIndex = existing, index
+			break
+		end
+	end
+	if not variant then
+		variant = {
+			signature = signature,
+			actionText = snap.actionText,
+			objectText = snap.objectText,
+			count = 0,
+			first = snap.time,
+			last = snap.time,
+		}
+		log.Variants[#log.Variants + 1] = variant
+		variantIndex = #log.Variants
+	end
+	variant.count += 1
+	variant.last = snap.time
+	snap.variantIndex = variantIndex
+
+	if log.LastSignature ~= nil and log.LastSignature ~= signature then
+		snap.changed = true -- this firing meant something different than the previous one
+		snap.previousActionText = log.LastActionText
+	end
+	log.LastSignature = signature
+	log.LastActionText = snap.actionText
+
 	local activations = log.Activations
 	activations[#activations + 1] = snap
 	if #activations > MAX_ACTIVATIONS then
