@@ -68,7 +68,7 @@ return function(props: {
 			LayoutOrder = Order,
 			Size = UDim2.fromScale(0, 1),
 			Text = Name,
-			TextSize = 14,
+			TextSize = 13,
 			ZIndex = 3,
 			Parent = Container,
 

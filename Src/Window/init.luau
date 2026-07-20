@@ -49,7 +49,9 @@ do
 	Resize.new({
 		MainFrame = MainFrame,
 
-		MinimumSize = Vector2.new(585, 220),
+		-- rh fork: 640 wide (was 585) so the topbar's 3-tab switcher can't collide with the title on
+		-- the left or the action buttons on the right at minimum size.
+		MinimumSize = Vector2.new(640, 220),
 
 		CornerHandleSize = 20,
 		HandleSize = 6,
@@ -164,6 +166,13 @@ local PromptsRoot = Interface.New("Frame", {
 	Visible = false,
 	Parent = MainFrame,
 })
+local InspectionRoot = Interface.New("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.fromScale(1, 1),
+	ZIndex = 0,
+	Visible = false,
+	Parent = MainFrame,
+})
 
 --// Views \\--
 local LogsPage = require(script.Views.Logs)({
@@ -183,6 +192,14 @@ local PromptsView = require(script.Views.Prompts)({
 	GetDPIScale = GetDPIScale,
 })
 Window.Prompts = PromptsView
+
+-- rh fork: the Inspection view (Cmd+Click an instance -> explorer tree + properties).
+local InspectionView = require(script.Views.Inspection)({
+	MainFrame = InspectionRoot,
+	ContextMenu = ContextMenus,
+	GetDPIScale = GetDPIScale,
+})
+Window.Inspection = InspectionView
 
 wax.shared.ClearLogs = LogsPage.ClearLogs
 wax.shared.GetCurrentLog = LogsPage.GetCurrentLog
@@ -244,11 +261,12 @@ local Topbar = require(script.Components.Topbar)({
 local CurrentMode = "Remotes"
 local Switcher = require(script.Components.ViewSwitcher)({
 	Parent = Topbar.TopBar,
-	Tabs = { "Remotes", "Prompts" },
+	Tabs = { "Remotes", "Prompts", "Inspection" },
 	OnSelected = function(Name)
 		CurrentMode = Name
 		RemotesRoot.Visible = Name == "Remotes"
 		PromptsRoot.Visible = Name == "Prompts"
+		InspectionRoot.Visible = Name == "Inspection"
 	end,
 })
 Switcher:Select("Remotes", true)
