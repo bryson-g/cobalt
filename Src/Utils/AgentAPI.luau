@@ -76,6 +76,39 @@ function AgentAPI.SetIgnored(instance, ignored: boolean)
 	StoreIgnores(set)
 end
 
+-- Mirror an ignore decision into the REST of the app, so every route (right-click in the Remotes
+-- view, the Sessions feed, the agent) lands in the same state:
+--   * the Settings > Ignored Remotes list, so it's visible and removable there
+--   * the actor VMs, so remotes fired from actors honour it too
+-- The Settings list removes by IDENTITY (table.find), so the entry added must be the Log itself —
+-- adding a lookalike table would make it un-removable from the UI later.
+local function SyncIgnoreState(log, ignored: boolean)
+	if wax.shared.IS_ACTOR or not log or not log.Instance then
+		return
+	end
+
+	if wax.shared.ActorCommunicator then
+		pcall(wax.shared.ActorCommunicator.Fire, wax.shared.ActorCommunicator, "MainIgnore", log.Instance, log.Type)
+	end
+
+	local list = wax.shared.Settings and wax.shared.Settings["IgnoredRemotes"]
+	if not list then
+		return
+	end
+	local entries = list.Value
+	local present = type(entries) == "table" and table.find(entries, log) ~= nil
+	if ignored and not present then
+		pcall(function()
+			list:AddToList(log)
+		end)
+	elseif not ignored and present then
+		pcall(function()
+			list:RemoveFromList(log)
+		end)
+	end
+end
+AgentAPI.SyncIgnoreState = SyncIgnoreState
+
 -- Apply the persisted ignore state onto a freshly-created Log (called from wax.shared.NewLog). Also
 -- surfaces it in the Settings > Ignored Remotes list so the operator can see + toggle it.
 function AgentAPI.RestoreLog(log)
@@ -84,12 +117,7 @@ function AgentAPI.RestoreLog(log)
 	end
 	if LoadIgnores()[RemoteKey(log.Instance)] then
 		log.Ignored = true
-		local list = wax.shared.Settings and wax.shared.Settings["IgnoredRemotes"]
-		if list and list.AddToList then
-			pcall(function()
-				list:AddToList({ Instance = log.Instance, Type = log.Type })
-			end)
-		end
+		SyncIgnoreState(log, true)
 	end
 end
 
@@ -117,8 +145,12 @@ function AgentAPI.IgnoreRemote(nameOrPath: string): number
 	local set = LoadIgnores()
 	local matched = 0
 	for _, log in ipairs(MatchingLogs(nameOrPath)) do
+		local changed = not log.Ignored
 		log.Ignored = true
 		set[RemoteKey(log.Instance)] = true
+		if changed then
+			SyncIgnoreState(log, true) -- Settings list + actor VMs, same as a right-click Ignore
+		end
 		matched += 1
 	end
 	if matched == 0 then
@@ -133,8 +165,12 @@ function AgentAPI.ShowRemote(nameOrPath: string): number
 	local set = LoadIgnores()
 	local matched = 0
 	for _, log in ipairs(MatchingLogs(nameOrPath)) do
+		local changed = log.Ignored
 		log.Ignored = false
 		set[RemoteKey(log.Instance)] = nil
+		if changed then
+			SyncIgnoreState(log, false)
+		end
 		matched += 1
 	end
 	set[nameOrPath] = nil
@@ -159,11 +195,15 @@ function AgentAPI.SetIgnoreList(keys: { string })
 		set[key] = true
 	end
 	StoreIgnores(set)
-	-- apply to live logs
+	-- apply to live logs, mirroring each change into the Settings list + actor VMs
 	for _, category in pairs(wax.shared.Logs or {}) do
 		for instance, log in pairs(category) do
 			if typeof(instance) == "Instance" then
-				log.Ignored = set[RemoteKey(instance)] == true
+				local ignored = set[RemoteKey(instance)] == true
+				if log.Ignored ~= ignored then
+					log.Ignored = ignored
+					SyncIgnoreState(log, ignored)
+				end
 			end
 		end
 	end
