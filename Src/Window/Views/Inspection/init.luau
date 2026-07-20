@@ -1305,12 +1305,15 @@ return function(props: {
 		["UIPadding"] = { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) },
 	})
 
-	-- "Visible" has to mean actually on screen: every ancestor visible AND the containing
-	-- ScreenGui/LayerCollector enabled, or we'd happily outline something nobody can see.
+	-- "On screen" needs every ancestor visible, the containing LayerCollector enabled, and no
+	-- collapsed CanvasGroup above it — otherwise we'd outline things nobody can see.
 	local function IsOnScreen(object): boolean
 		local node = object
 		while node and node:IsA("GuiObject") do
 			if not node.Visible then
+				return false
+			end
+			if node:IsA("CanvasGroup") and node.GroupTransparency >= 0.95 then
 				return false
 			end
 			node = node.Parent
@@ -1322,7 +1325,29 @@ return function(props: {
 		return true
 	end
 
-	local function TopmostGuiAtCursor(): GuiObject?
+	-- Does this element actually PAINT anything itself? Games leave many full-screen layers mounted
+	-- and Visible with a transparent background (cutscene fades, notification hosts). They pass every
+	-- visibility test but draw nothing, and being outermost they'd otherwise swallow every hover.
+	local function RendersSomething(object): boolean
+		local ok, result = pcall(function()
+			if object.BackgroundTransparency < 0.95 then
+				return true
+			end
+			if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+				return object.Text ~= "" and object.TextTransparency < 0.95
+			end
+			if object:IsA("ImageLabel") or object:IsA("ImageButton") then
+				return object.Image ~= "" and object.ImageTransparency < 0.95
+			end
+			if object:IsA("ViewportFrame") then
+				return object.ImageTransparency < 0.95
+			end
+			return false
+		end)
+		return ok and result == true
+	end
+
+	local function BestGuiAtCursor(): GuiObject?
 		local playerGui = wax.shared.LocalPlayer and wax.shared.LocalPlayer:FindFirstChild("PlayerGui")
 		if not playerGui then
 			return nil
@@ -1337,14 +1362,34 @@ return function(props: {
 				return playerGui:GetGuiObjectsAtPosition(point.X, point.Y)
 			end)
 			if ok and objects then
-				for _, object in ipairs(objects) do -- topmost first
+				-- Prefer the SMALLEST painting element under the cursor: the innermost thing is what
+				-- you meant, not the full-screen container that happens to contain it. Non-painting
+				-- hits are kept only as a fallback for when nothing under the cursor paints.
+				local best, bestArea = nil, math.huge
+				local fallback, fallbackArea = nil, math.huge
+
+				for _, object in ipairs(objects) do
 					local mine = false
 					pcall(function()
 						mine = object:IsDescendantOf(wax.shared.ScreenGui)
 					end)
 					if not mine and IsOnScreen(object) then
-						return object
+						local size = object.AbsoluteSize
+						local area = size.X * size.Y
+						if area > 0 then
+							if RendersSomething(object) then
+								if area < bestArea then
+									best, bestArea = object, area
+								end
+							elseif area < fallbackArea then
+								fallback, fallbackArea = object, area
+							end
+						end
 					end
+				end
+
+				if best or fallback then
+					return best or fallback
 				end
 			end
 		end
@@ -1375,7 +1420,7 @@ return function(props: {
 		table.insert(
 			UIPickConnections,
 			wax.shared.RunService.RenderStepped:Connect(function()
-				local target = TopmostGuiAtCursor()
+				local target = BestGuiAtCursor()
 				UIHovered = target
 				if not target then
 					UIHighlight.Visible = false
