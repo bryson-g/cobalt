@@ -193,11 +193,19 @@ local PromptsView = require(script.Views.Prompts)({
 })
 Window.Prompts = PromptsView
 
--- rh fork: the Inspection view (Cmd+Click an instance -> explorer tree + properties).
+-- rh fork: the Inspection view (Cmd+Click an instance -> explorer tree + properties). Declared ahead
+-- of the topbar switcher so a world pick can bring its tab forward — otherwise picking while another
+-- tab is open updates a pane you can't see.
+local Switcher
 local InspectionView = require(script.Views.Inspection)({
 	MainFrame = InspectionRoot,
 	ContextMenu = ContextMenus,
 	GetDPIScale = GetDPIScale,
+	OnPicked = function()
+		if Switcher then
+			Switcher:Select("Inspect")
+		end
+	end,
 })
 Window.Inspection = InspectionView
 
@@ -259,7 +267,7 @@ local Topbar = require(script.Components.Topbar)({
 -- rh fork: top-level segmented switch centered in the topbar. Toggles the two view roots so the remote
 -- and prompt capture streams stay in separate panes.
 local CurrentMode = "Remotes"
-local Switcher = require(script.Components.ViewSwitcher)({
+Switcher = require(script.Components.ViewSwitcher)({
 	Parent = Topbar.TopBar,
 	Tabs = { "Remotes", "Prompts", "Inspect" },
 	OnSelected = function(Name)

@@ -19,6 +19,7 @@ local Icons = require("@src/Utils/UI/Assets/Icons")
 local BG = Color3.fromRGB(25, 25, 25)
 local BG_INNER = Color3.fromRGB(15, 15, 15)
 local SELECTED = Color3.fromRGB(50, 50, 50)
+local SELECT_BLUE = Color3.fromRGB(38, 96, 190) -- selected explorer row
 
 local ROW_HEIGHT = 22
 local ROW_PADDING = 2
@@ -137,6 +138,7 @@ return function(props: {
 	MainFrame: GuiObject,
 	ContextMenu: any,
 	GetDPIScale: () -> number,
+	OnPicked: ((Instance) -> ())?, -- fired on a world pick, so the window can surface this tab
 })
 	local MainFrame = props.MainFrame
 
@@ -187,6 +189,18 @@ return function(props: {
 		TextSize = 13,
 		TextTransparency = 0.45,
 		Size = UDim2.fromScale(1, 1),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = Header,
+	})
+
+	-- Arms a one-shot pick that needs NO modifier — the fallback if the platform doesn't report the
+	-- Command key the way we expect. Sits just left of "refresh".
+	local PickButton = Interface.New("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "pick",
+		TextSize = 13,
+		TextTransparency = 0.45,
+		Size = UDim2.new(1, -52, 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Right,
 		Parent = Header,
 	})
@@ -460,7 +474,7 @@ return function(props: {
 		local isSelected = instance == View.Selected
 
 		local RowButton = Interface.New("TextButton", {
-			BackgroundColor3 = SELECTED,
+			BackgroundColor3 = isSelected and SELECT_BLUE or SELECTED,
 			BackgroundTransparency = isSelected and 0 or 1,
 			Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
 			LayoutOrder = order,
@@ -570,18 +584,36 @@ return function(props: {
 		end
 	end
 
-	-- scroll the selected row into view after a reveal
+	-- Scroll the selected row into view. Deferred a frame on purpose: the tree uses
+	-- AutomaticCanvasSize, so right after a rebuild the canvas hasn't been measured yet and any
+	-- CanvasPosition we set is clamped straight back to 0 (which is why a reveal appeared to do
+	-- nothing). Waiting for the next Heartbeat lets the layout size the canvas first.
 	local function ScrollToSelected()
-		if not View.Selected then
+		local selected = View.Selected
+		if not selected then
 			return
 		end
-		for index, entry in ipairs(FlatRows) do
-			if entry.instance == View.Selected then
-				local y = (index - 1) * (ROW_HEIGHT + ROW_PADDING)
-				Tree.CanvasPosition = Vector2.new(0, math.max(0, y - Tree.AbsoluteSize.Y / 2))
-				return
+		local index
+		for i, entry in ipairs(FlatRows) do
+			if entry.instance == selected then
+				index = i
+				break
 			end
 		end
+		if not index then
+			return
+		end
+
+		task.defer(function()
+			pcall(function()
+				wax.shared.RunService.Heartbeat:Wait()
+			end)
+			if View.Selected ~= selected then
+				return -- selection moved on while we waited
+			end
+			local y = (index - 1) * (ROW_HEIGHT + ROW_PADDING)
+			Tree.CanvasPosition = Vector2.new(0, math.max(0, y - Tree.AbsoluteSize.Y / 2))
+		end)
 	end
 
 	RefreshLabel.MouseButton1Click:Connect(function()
@@ -589,6 +621,10 @@ return function(props: {
 	end)
 
 	--// Picking: Cmd + Click //--------------------------------------------------------------------
+	-- Modifier detection goes through InputObject:IsModifierKeyDown, which is the actual API for this
+	-- (Meta == Command on macOS), rather than guessing which KeyCode the platform reports. The
+	-- IsKeyDown sweep stays as a fallback, and the "pick" button arms a modifier-free pick in case a
+	-- platform reports neither.
 	local CommandKeys = {}
 	for _, name in ipairs({ "LeftSuper", "RightSuper", "LeftMeta", "RightMeta" }) do
 		local ok, key = pcall(function()
@@ -600,17 +636,34 @@ return function(props: {
 	end
 
 	local UserInputService = wax.shared.UserInputService
-	local function CommandHeld(): boolean
+	local function CommandHeld(input): boolean
+		local ok, down = pcall(function()
+			return input:IsModifierKeyDown(Enum.ModifierKey.Meta)
+		end)
+		if ok and down then
+			return true
+		end
 		for _, key in ipairs(CommandKeys) do
-			local ok, down = pcall(function()
+			local okKey, held = pcall(function()
 				return UserInputService:IsKeyDown(key)
 			end)
-			if ok and down then
+			if okKey and held then
 				return true
 			end
 		end
 		return false
 	end
+
+	local Armed = false
+	local function SetArmed(value: boolean)
+		Armed = value
+		PickButton.Text = value and "click a part…" or "pick"
+		PickButton.TextTransparency = value and 0 or 0.45
+		PickButton.TextColor3 = value and Color3.fromRGB(120, 170, 255) or Color3.new(1, 1, 1)
+	end
+	PickButton.MouseButton1Click:Connect(function()
+		SetArmed(not Armed)
+	end)
 
 	local mouse
 	pcall(function()
@@ -626,16 +679,24 @@ return function(props: {
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
 			return
 		end
-		if not CommandHeld() then
+		if not (Armed or CommandHeld(input)) then
 			return
 		end
 
 		local target = mouse.Target
 		if not target then
+			if Armed and wax.shared.Sonner then
+				wax.shared.Sonner.warning("Nothing under the cursor — aim at a part")
+			end
 			return
 		end
+
+		SetArmed(false)
 		SelectInstance(target, true)
 		ScrollToSelected()
+		if props.OnPicked then
+			pcall(props.OnPicked, target) -- bring the Inspect tab forward so the pick is actually visible
+		end
 		if wax.shared.Sonner then
 			wax.shared.Sonner.info(("Inspecting %s (%s)"):format(target.Name, target.ClassName))
 		end
