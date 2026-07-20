@@ -170,20 +170,6 @@ return function(props: {
 	-- rh fork: quick "clear" button so you can reset the view to a clean slate without digging into
 	-- Settings. Clears whichever stream is in view (Remotes or Prompts) via wax.shared.ClearActiveView,
 	-- falling back to clearing remote logs if the switcher isn't wired yet.
-	-- rh fork: record button — starts/stops a session capturing every remote call in between, so a
-	-- process done by hand can be replayed or turned into automation. Icon flips to a red square while
-	-- recording (kept in sync below).
-	table.insert(TopButtonData, {
-		Type = "Button",
-		Icon = "circle",
-		Tag = "record",
-		Order = 9997,
-		Callback = function()
-			if wax.shared.Recorder then
-				pcall(wax.shared.Recorder.Toggle)
-			end
-		end,
-	})
 	table.insert(TopButtonData, {
 		Type = "Button",
 		Icon = "trash",
@@ -216,31 +202,12 @@ return function(props: {
 		Callback = wax.shared.Unload,
 	})
 
-	local RecordIcon
-
 	for Order, Data in TopButtonData do
 		if Data.Type == "Separator" then
 			CreateTopSeparator(Order)
 		else
-			local _, Image = CreateTopButton(Data.Icon, Order, Data.Callback)
-			if Data.Tag == "record" then
-				RecordIcon = Image
-			end
+			CreateTopButton(Data.Icon, Order, Data.Callback)
 		end
-	end
-
-	-- rh fork: keep the record button's icon in sync with the recorder, including when recording is
-	-- toggled from somewhere else (the agent over the bridge).
-	if RecordIcon and wax.shared.Recorder then
-		local Icons = require("@src/Utils/UI/Assets/Icons")
-		local function Sync()
-			local recording = wax.shared.Recorder.IsRecording()
-			Icons.SetIcon(RecordIcon, recording and "square" or "circle")
-			RecordIcon.ImageColor3 = recording and Color3.fromRGB(235, 80, 80) or Color3.new(1, 1, 1)
-			RecordIcon.ImageTransparency = recording and 0 or 0.5
-		end
-		wax.shared.Recorder.Subscribe(Sync)
-		Sync()
 	end
 
 	Drag.Setup(MainFrame, TopBar, nil, {

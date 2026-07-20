@@ -1,7 +1,7 @@
 --!nonstrict
--- rh-farm fork — Sessions view: browse recordings made with the topbar record button.
--- Left  = the sessions (name, event count, duration; the live one is marked).
--- Right = the selected session's remote calls in order, with Play / Stop / Export / Delete.
+-- rh-farm fork — Sessions view: record and browse capture sessions.
+-- Left  = the record button plus the sessions (name, event count, duration; the live one is marked).
+-- Right = the selected session's feed, newest first, with Play / Stop / Save / Export / Delete.
 --
 -- Play re-fires the recorded OUTGOING calls with their original spacing — that hits the real server,
 -- so it only ever runs from an explicit click.
@@ -69,18 +69,31 @@ return function(props: {
 		Parent = Header,
 	})
 
+	-- Record control lives here in the tab rather than the topbar: it belongs with the thing it
+	-- produces, and the topbar is for window-level chrome.
+	local RecordButton = Interface.New("TextButton", {
+		BackgroundColor3 = Color3.fromRGB(60, 40, 40),
+		Position = UDim2.fromOffset(0, 36),
+		Size = UDim2.new(1, 0, 0, 26),
+		Text = "● Record",
+		TextSize = 14,
+		Parent = LeftList,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+	})
+
 	local ListWrapper = Interface.New("Frame", {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundColor3 = BG,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -36),
+		Size = UDim2.new(1, 0, 1, -68), -- header (30) + record button (26) + gaps
 		Parent = LeftList,
 
 		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 	})
 
 	local EmptyHint = Interface.New("TextLabel", {
-		Text = "No recordings yet.\nHit the ● record button in the topbar, do the thing by hand, hit it again.",
+		Text = "No recordings yet.\nHit ● Record, do the thing by hand, then hit it again.",
 		TextSize = 13,
 		TextWrapped = true,
 		TextTransparency = 0.45,
@@ -290,7 +303,8 @@ return function(props: {
 			BackgroundColor3 = BG,
 			AutomaticSize = Enum.AutomaticSize.Y,
 			Size = UDim2.new(1, 0, 0, 0),
-			LayoutOrder = index,
+			-- negative order = newest on top, matching the prompt/seat lists
+			LayoutOrder = -index,
 			Text = "",
 			Parent = Events,
 
@@ -331,21 +345,19 @@ return function(props: {
 		return Row
 	end
 
-	-- Keep the feed pinned to the newest entry, but only while the user is already at the bottom, so
-	-- scrolling back through a live recording isn't yanked away. Deferred a frame because
-	-- AutomaticCanvasSize hasn't measured the new row yet.
-	local function StickToBottom()
-		local canvas = Events.AbsoluteCanvasSize.Y
-		local viewport = Events.AbsoluteSize.Y
-		local atBottom = (canvas - viewport - Events.CanvasPosition.Y) < 48
-		if not atBottom then
+	-- Newest rows arrive at the top, so "follow the feed" means staying pinned at scroll 0. Only do it
+	-- when the user is already near the top, so reading back through a live recording isn't yanked.
+	local function StickToTop()
+		if Events.CanvasPosition.Y > 48 then
 			return
 		end
 		task.defer(function()
 			pcall(function()
 				wax.shared.RunService.Heartbeat:Wait()
 			end)
-			Events.CanvasPosition = Vector2.new(0, math.max(0, Events.AbsoluteCanvasSize.Y - Events.AbsoluteSize.Y))
+			if Events.CanvasPosition.Y <= 48 then
+				Events.CanvasPosition = Vector2.zero
+			end
 		end)
 	end
 
@@ -359,7 +371,7 @@ return function(props: {
 		for i = startIndex, total do
 			MakeEventRow(session.Events[i], i)
 		end
-		StickToBottom()
+		StickToTop()
 	end
 
 	-- append just the newest event (live feed while recording) instead of rebuilding the list
@@ -378,9 +390,10 @@ return function(props: {
 			end
 		end
 		if rows > MAX_EVENT_ROWS then
+			-- order is -index, so the OLDEST row is the one with the largest LayoutOrder
 			local oldest
 			for _, child in ipairs(Events:GetChildren()) do
-				if child:IsA("TextButton") and (not oldest or child.LayoutOrder < oldest.LayoutOrder) then
+				if child:IsA("TextButton") and (not oldest or child.LayoutOrder > oldest.LayoutOrder) then
 					oldest = child
 				end
 			end
@@ -388,7 +401,7 @@ return function(props: {
 				oldest:Destroy()
 			end
 		end
-		StickToBottom()
+		StickToTop()
 	end
 
 	local function RefreshToolbar()
@@ -596,6 +609,17 @@ return function(props: {
 		RefreshToolbar()
 	end)
 
+	local function RefreshRecordButton()
+		local recording = Recorder.IsRecording()
+		RecordButton.Text = recording and "■ Stop recording" or "● Record"
+		RecordButton.BackgroundColor3 = recording and REC_RED or Color3.fromRGB(60, 40, 40)
+	end
+
+	RecordButton.MouseButton1Click:Connect(function()
+		Recorder.Toggle()
+		RefreshRecordButton()
+	end)
+
 	SaveButton.MouseButton1Click:Connect(function()
 		local session = View.Selected
 		if not session then
@@ -654,6 +678,11 @@ return function(props: {
 
 	--// Live //-----------------------------------------------------------------------------------
 	Recorder.Subscribe(function(kind, session)
+		-- keep the button in step even when recording is toggled elsewhere (e.g. the agent)
+		if kind == "started" or kind == "stopped" then
+			RefreshRecordButton()
+		end
+
 		if kind == "started" then
 			RefreshAll()
 			if session then
@@ -697,6 +726,7 @@ return function(props: {
 	end)
 
 	RefreshAll()
+	RefreshRecordButton()
 
 	return View
 end
