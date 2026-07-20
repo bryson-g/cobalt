@@ -16,11 +16,12 @@ return function(props: {
 		Current = nil,
 	}
 
+	-- Left-aligned in its parent (the tab strip) and sized to its tabs.
 	local Container = Interface.New("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
+		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = Color3.fromRGB(18, 18, 18),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(74 * #props.Tabs, 26),
+		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(74 * #props.Tabs, 24),
 		ZIndex = 3,
 		Parent = props.Parent,
 

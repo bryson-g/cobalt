@@ -611,6 +611,172 @@ function AgentAPI.ClearPrompts(nameOrPath: string?)
 	return true
 end
 
+--// Seats ////////////////////////////////////////////////////////////////////////////////////////
+-- Every seat the character has sat on, newest last. Snapshots are taken at SIT time (seats get
+-- destroyed/reparented — vehicles despawn, furniture unloads — and the ancestry would be gone).
+--   name   substring match on seat name or path
+--   limit  cap results (newest kept)
+function AgentAPI.GetSeats(opts): { any }
+	opts = opts or {}
+	local nameFilter = opts.name and string.lower(opts.name) or nil
+	local out = {}
+	for _, event in ipairs(wax.shared.SeatLogs or {}) do
+		local name = tostring(event.name or "")
+		local path = tostring(event.path or "")
+		if
+			not nameFilter
+			or string.find(string.lower(name), nameFilter, 1, true)
+			or string.find(string.lower(path), nameFilter, 1, true)
+		then
+			out[#out + 1] = {
+				index = event.index,
+				time = event.time,
+				name = event.name,
+				class = event.class,
+				path = event.path,
+				parentName = event.parentName,
+				parentClass = event.parentClass,
+				position = event.position,
+				disabled = event.disabled,
+				attributes = event.attributes,
+				stillExists = typeof(event.seat) == "Instance" and event.seat.Parent ~= nil,
+			}
+		end
+	end
+	if opts.limit and #out > opts.limit then
+		local trimmed = {}
+		for i = #out - opts.limit + 1, #out do
+			trimmed[#trimmed + 1] = out[i]
+		end
+		return trimmed
+	end
+	return out
+end
+
+function AgentAPI.ExportSeats(fileName: string?, opts): (string?, number)
+	local snapshot = AgentAPI.GetSeats(opts)
+	local ok, json = pcall(function()
+		return wax.shared.HttpService:JSONEncode({
+			exportedAt = os.time(),
+			seatCount = #snapshot,
+			seats = snapshot,
+		})
+	end)
+	if not ok then
+		return nil, 0
+	end
+	local name = fileName or ("cobalt-seats-" .. os.time() .. ".json")
+	local written = pcall(function()
+		FileHelper.new("Cobalt/Export"):WriteFile(name, json)
+	end)
+	return written and ("Cobalt/Export/" .. name) or nil, #snapshot
+end
+
+function AgentAPI.ClearSeats(): boolean
+	if wax.shared.SeatSpy then
+		pcall(wax.shared.SeatSpy.Clear)
+		return true
+	end
+	return false
+end
+
+--// Recording sessions ////////////////////////////////////////////////////////////////////////////
+-- Record every captured remote call between Start and Stop, so a process performed by hand can be
+-- read back as data and turned into automation. Sessions also persist to Cobalt/Sessions/<id>.json.
+-- NOTE: recording inherits the capture filters — an ignored/blocked remote produces no call, so it
+-- never enters a session.
+
+local function Recorder()
+	return wax.shared.Recorder
+end
+
+function AgentAPI.StartRecording(name: string?)
+	local rec = Recorder()
+	if not rec then
+		return nil
+	end
+	local session = rec.Start(name)
+	return session and session.Id or nil
+end
+
+function AgentAPI.StopRecording()
+	local rec = Recorder()
+	if not rec then
+		return nil
+	end
+	local session = rec.Stop()
+	return session and rec.SessionToTable(session, { includeEvents = false }) or nil
+end
+
+function AgentAPI.IsRecording(): boolean
+	local rec = Recorder()
+	return rec ~= nil and rec.IsRecording()
+end
+
+-- All sessions, newest last. Pass includeEvents=false for a lightweight listing.
+function AgentAPI.GetSessions(opts): { any }
+	local rec = Recorder()
+	if not rec then
+		return {}
+	end
+	opts = opts or { includeEvents = false }
+	local out = {}
+	for _, session in ipairs(wax.shared.RecordedSessions or {}) do
+		out[#out + 1] = rec.SessionToTable(session, opts)
+	end
+	return out
+end
+
+-- One session with its full event list (this is the one to read when turning a recording into code).
+function AgentAPI.GetSession(id: string, opts)
+	local rec = Recorder()
+	if not rec then
+		return nil
+	end
+	local session = rec.Get(id)
+	return session and rec.SessionToTable(session, opts or {}) or nil
+end
+
+function AgentAPI.ExportSession(id: string, fileName: string?): (string?, number)
+	local rec = Recorder()
+	local session = rec and rec.Get(id)
+	if not session then
+		return nil, 0
+	end
+	local data = rec.SessionToTable(session)
+	local ok, json = pcall(function()
+		return wax.shared.HttpService:JSONEncode(data)
+	end)
+	if not ok then
+		return nil, 0
+	end
+	local name = fileName or (session.Id .. ".json")
+	local written = pcall(function()
+		FileHelper.new("Cobalt/Sessions"):WriteFile(name, json)
+	end)
+	return written and ("Cobalt/Sessions/" .. name) or nil, data.eventCount
+end
+
+-- Replay a session's outgoing calls. This FIRES REMOTES for real — server-side effects apply.
+function AgentAPI.PlaySession(id: string, opts): boolean
+	local rec = Recorder()
+	local session = rec and rec.Get(id)
+	if not session then
+		return false
+	end
+	return rec.Play(session, opts) ~= nil
+end
+
+function AgentAPI.StopPlayback(): boolean
+	local rec = Recorder()
+	return rec ~= nil and rec.StopPlayback()
+end
+
+function AgentAPI.DeleteSession(id: string): boolean
+	local rec = Recorder()
+	return rec ~= nil and rec.Delete(id)
+end
+
 -- Clear the captured-call view (all remotes, or a specific instance/direction). Refreshes the UI.
 function AgentAPI.ClearLogs(instance, direction)
 	if wax.shared.ClearLogs then

@@ -297,6 +297,17 @@ wax.shared.Unload = function()
 		table.clear(wax.shared.PromptLogs)
 	end
 
+	if wax.shared.Recorder then
+		pcall(wax.shared.Recorder.StopPlayback)
+		pcall(wax.shared.Recorder.Stop) -- flushes an in-progress recording to disk before we drop it
+	end
+	if wax.shared.SeatLogs then
+		table.clear(wax.shared.SeatLogs)
+	end
+	if wax.shared.RecordedSessions then
+		table.clear(wax.shared.RecordedSessions)
+	end
+
 	getgenv().CobaltInitialized = false
 	getgenv().Cobalt = nil
 
@@ -487,6 +498,17 @@ wax.shared.AgentAPI = require(script.Utils.AgentAPI)
 wax.shared.PromptLogs = {}
 wax.shared.PromptSpy = require(script.Spy.PromptSpy)
 wax.shared.PromptSpy.Start()
+
+-- rh fork: seat capture (Humanoid.Seated isn't a remote, so nothing else sees it).
+wax.shared.SeatLogs = {}
+wax.shared.SeatSpy = require(script.Spy.SeatSpy)
+wax.shared.SeatSpy.Start()
+
+-- rh fork: session recording. Subscribes to the existing capture pipeline (no new hooks) so a
+-- manually-performed process can be recorded, read back as data, and replayed.
+wax.shared.RecordedSessions = {}
+wax.shared.Recorder = require(script.Spy.Recorder)
+wax.shared.Recorder.Start_Listening()
 
 wax.shared.NewLog = function(Instance, Type, CallingScript)
 	local Log = wax.shared.Log.new(Instance, Type, wax.shared.GetTableLength(wax.shared.Logs[Type]) + 1, CallingScript)

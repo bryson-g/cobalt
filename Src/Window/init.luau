@@ -49,9 +49,9 @@ do
 	Resize.new({
 		MainFrame = MainFrame,
 
-		-- rh fork: 640 wide (was 585) so the topbar's 3-tab switcher can't collide with the title on
-		-- the left or the action buttons on the right at minimum size.
-		MinimumSize = Vector2.new(640, 220),
+		-- rh fork: wide enough for the tab strip's five tabs (the strip is its own row now, so this is
+		-- no longer competing with the topbar title/buttons).
+		MinimumSize = Vector2.new(600, 240),
 
 		CornerHandleSize = 20,
 		HandleSize = 6,
@@ -149,30 +149,31 @@ Window.Modals.Controller = ModalController.new(MainFrame, {
 })
 
 --// View Roots \\--
--- rh fork: two full-size transparent roots so Remotes and Prompts never share the same pane. Each
--- child view keeps its original MainFrame-relative geometry (the roots match MainFrame exactly); the
--- topbar switcher below just toggles which root is Visible. Active=false (default) so the transparent
--- root never intercepts topbar clicks. ZIndex 0 keeps it under the topbar buttons.
-local RemotesRoot = Interface.New("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.fromScale(1, 1),
-	ZIndex = 0,
-	Parent = MainFrame,
-})
-local PromptsRoot = Interface.New("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.fromScale(1, 1),
-	ZIndex = 0,
-	Visible = false,
-	Parent = MainFrame,
-})
-local InspectionRoot = Interface.New("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.fromScale(1, 1),
-	ZIndex = 0,
-	Visible = false,
-	Parent = MainFrame,
-})
+-- rh fork: one transparent root per view so the capture streams never share a pane; the tab strip
+-- just toggles which root is Visible. Active=false (default) so a root never intercepts clicks meant
+-- for the chrome, and ZIndex 0 keeps it under the topbar buttons.
+--
+-- Geometry note: every view anchors its children to the BOTTOM of its root with height `1, -36`,
+-- i.e. each view leaves 36px free at the top of its own root. So offsetting the roots down by the
+-- tab strip's height lands all content below topbar+strip WITHOUT touching any view's internals.
+local TAB_STRIP_HEIGHT = 30
+
+local function NewViewRoot(visible: boolean)
+	return Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, TAB_STRIP_HEIGHT),
+		Size = UDim2.new(1, 0, 1, -TAB_STRIP_HEIGHT),
+		ZIndex = 0,
+		Visible = visible,
+		Parent = MainFrame,
+	})
+end
+
+local RemotesRoot = NewViewRoot(true)
+local PromptsRoot = NewViewRoot(false)
+local InspectionRoot = NewViewRoot(false)
+local SeatsRoot = NewViewRoot(false)
+local SessionsRoot = NewViewRoot(false)
 
 --// Views \\--
 local LogsPage = require(script.Views.Logs)({
@@ -208,6 +209,27 @@ local InspectionView = require(script.Views.Inspection)({
 	end,
 })
 Window.Inspection = InspectionView
+
+-- rh fork: Seats (what the character sat on) and Sessions (recordings from the topbar record button).
+local SeatsView = require(script.Views.Seats)({
+	MainFrame = SeatsRoot,
+	ContextMenu = ContextMenus,
+	SeatSpy = wax.shared.SeatSpy,
+	OnInspect = function(instance)
+		if Switcher then
+			Switcher:Select("Inspect")
+		end
+		InspectionView.Reveal(instance)
+	end,
+})
+Window.Seats = SeatsView
+
+local SessionsView = require(script.Views.Sessions)({
+	MainFrame = SessionsRoot,
+	ContextMenu = ContextMenus,
+	Recorder = wax.shared.Recorder,
+})
+Window.Sessions = SessionsView
 
 wax.shared.ClearLogs = LogsPage.ClearLogs
 wax.shared.GetCurrentLog = LogsPage.GetCurrentLog
@@ -263,18 +285,34 @@ local Topbar = require(script.Components.Topbar)({
 	GetDPIScale = GetDPIScale,
 })
 
---// View Switcher (Remotes | Prompts) \\--
--- rh fork: top-level segmented switch centered in the topbar. Toggles the two view roots so the remote
--- and prompt capture streams stay in separate panes.
+--// View Switcher \\--
+-- rh fork: the tab strip lives on its own row under the topbar. It started centered IN the topbar,
+-- but at five tabs there's no width left there between the title and the action buttons — a
+-- dedicated strip keeps every tab legible and scales to further views.
+local TabStrip = Interface.New("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(0, 36),
+	Size = UDim2.new(1, 0, 0, TAB_STRIP_HEIGHT),
+	ZIndex = 2,
+	Parent = MainFrame,
+
+	["UIPadding"] = {
+		PaddingLeft = UDim.new(0, 6),
+		PaddingRight = UDim.new(0, 6),
+	},
+})
+
 local CurrentMode = "Remotes"
 Switcher = require(script.Components.ViewSwitcher)({
-	Parent = Topbar.TopBar,
-	Tabs = { "Remotes", "Prompts", "Inspect" },
+	Parent = TabStrip,
+	Tabs = { "Remotes", "Prompts", "Inspect", "Seats", "Sessions" },
 	OnSelected = function(Name)
 		CurrentMode = Name
 		RemotesRoot.Visible = Name == "Remotes"
 		PromptsRoot.Visible = Name == "Prompts"
 		InspectionRoot.Visible = Name == "Inspect"
+		SeatsRoot.Visible = Name == "Seats"
+		SessionsRoot.Visible = Name == "Sessions"
 	end,
 })
 Switcher:Select("Remotes", true)
