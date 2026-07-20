@@ -231,7 +231,7 @@ return function(props: {
 
 	local function ClearEvents()
 		for _, child in ipairs(Events:GetChildren()) do
-			if child:IsA("Frame") then
+			if child:IsA("TextButton") then
 				child:Destroy()
 			end
 		end
@@ -244,16 +244,54 @@ return function(props: {
 		seat = { marker = "▭", colour = Color3.fromRGB(160, 210, 170) },
 	}
 
+	-- Right-click actions on a feed row. Remotes can be ignored (which also purges them from the
+	-- session); anything can just be removed. Events are held by reference, so a row keeps working
+	-- after earlier events are removed and the indices shift.
+	local function EventContextOptions(event)
+		local options = {}
+
+		if (event.kind or "remote") == "remote" then
+			table.insert(options, {
+				Text = "Ignore remote",
+				Icon = "eye-off",
+				Callback = function()
+					local ok, removed = Recorder.IgnoreAndPurge(View.Selected, event)
+					if wax.shared.Sonner then
+						if ok then
+							wax.shared.Sonner.success(
+								("Ignoring %s — removed %d event(s)"):format(tostring(event.name), removed)
+							)
+						else
+							wax.shared.Sonner.error("Could not ignore that remote")
+						end
+					end
+				end,
+			})
+		end
+
+		table.insert(options, {
+			Text = "Remove from session",
+			Icon = "trash",
+			Callback = function()
+				Recorder.RemoveEvent(View.Selected, event)
+			end,
+		})
+
+		return options
+	end
+
 	local function MakeEventRow(event, index: number)
 		local kind = event.kind or "remote"
 		local style = KIND_STYLE[kind] or KIND_STYLE.remote
 		local marker = style.marker or (event.type == "Outgoing" and "→" or "←")
 
-		local Row = Interface.New("Frame", {
+		-- a TextButton (not a Frame) so the row can receive right-clicks
+		local Row = Interface.New("TextButton", {
 			BackgroundColor3 = BG,
 			AutomaticSize = Enum.AutomaticSize.Y,
 			Size = UDim2.new(1, 0, 0, 0),
 			LayoutOrder = index,
+			Text = "",
 			Parent = Events,
 
 			["UICorner"] = { CornerRadius = UDim.new(0, 4) },
@@ -264,6 +302,10 @@ return function(props: {
 				PaddingBottom = UDim.new(0, 4),
 			},
 		})
+
+		local Menu = ContextMenu:Create(Row, EventContextOptions(event), true)
+		Row.MouseButton2Click:Connect(Menu.Toggle)
+		Menu:BindLongPress(Row)
 
 		Interface.New("TextLabel", {
 			Text = ("%6.2fs  %s  %s"):format(event.t or 0, marker, tostring(event.name)),
@@ -331,14 +373,14 @@ return function(props: {
 
 		local rows = 0
 		for _, child in ipairs(Events:GetChildren()) do
-			if child:IsA("Frame") then
+			if child:IsA("TextButton") then
 				rows += 1
 			end
 		end
 		if rows > MAX_EVENT_ROWS then
 			local oldest
 			for _, child in ipairs(Events:GetChildren()) do
-				if child:IsA("Frame") and (not oldest or child.LayoutOrder < oldest.LayoutOrder) then
+				if child:IsA("TextButton") and (not oldest or child.LayoutOrder < oldest.LayoutOrder) then
 					oldest = child
 				end
 			end
@@ -633,6 +675,15 @@ return function(props: {
 			end
 		elseif kind == "deleted" or kind == "loaded" then
 			RefreshAll()
+		elseif kind == "mutated" then
+			-- an event was removed/purged: indices shifted, so redraw the feed
+			if session then
+				RefreshRow(session)
+			end
+			if View.Selected == session then
+				RenderEvents(session)
+				RefreshToolbar()
+			end
 		elseif kind == "saved" or kind == "renamed" then
 			if session then
 				RefreshRow(session)

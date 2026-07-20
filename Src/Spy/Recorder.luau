@@ -312,6 +312,62 @@ function Recorder.Delete(id: string): boolean
 	return false
 end
 
+--// Editing a session //----------------------------------------------------------------------------
+-- Sessions get pruned by hand before they're worth automating, so events are matched by identity
+-- (not index) — indices shift as soon as anything is removed.
+
+function Recorder.RemoveEvent(session, event): boolean
+	if not session or not event then
+		return false
+	end
+	for index, existing in ipairs(session.Events) do
+		if existing == event then
+			table.remove(session.Events, index)
+			Notify("mutated", session)
+			return true
+		end
+	end
+	return false
+end
+
+--- Add a remote to the persisted ignore list and drop every event for it from this session.
+--- Ignoring is global (future recordings skip it too); the purge is scoped to this session, which is
+--- the one you're looking at. Returns (ok, removedCount).
+function Recorder.IgnoreAndPurge(session, event): (boolean, number)
+	local AgentAPI = wax.shared.AgentAPI
+	if not AgentAPI or not event then
+		return false, 0
+	end
+	local key = event.path
+	if key == nil or key == "" then
+		key = event.name
+	end
+	if key == nil or key == "" then
+		return false, 0
+	end
+
+	-- IgnoreRemote both flags any live Log and persists the key, so the Remotes view and future
+	-- captures agree with what we just did here.
+	pcall(AgentAPI.IgnoreRemote, key)
+
+	local removed = 0
+	if session then
+		for index = #session.Events, 1, -1 do
+			local existing = session.Events[index]
+			if (existing.kind or "remote") == "remote" then
+				local samePath = existing.path ~= nil and existing.path == event.path
+				local sameName = existing.name ~= nil and existing.name == event.name
+				if samePath or sameName then
+					table.remove(session.Events, index)
+					removed += 1
+				end
+			end
+		end
+		Notify("mutated", session)
+	end
+	return true, removed
+end
+
 function Recorder.Get(id: string)
 	for _, session in ipairs(Sessions()) do
 		if session.Id == id then
