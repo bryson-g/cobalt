@@ -8,6 +8,7 @@
 
 local Interface = require("@src/Utils/UI/Interface")
 local Constants = require("@src/Window/Constants")
+local ViewSwitcher = require("@src/Window/Components/ViewSwitcher")
 
 local BG = Color3.fromRGB(25, 25, 25)
 local BG_INNER = Color3.fromRGB(15, 15, 15)
@@ -215,11 +216,19 @@ return function(props: {
 		Parent = Toolbar,
 	})
 
+	-- Direction filter for the feed. Combined is the default so nothing is hidden until asked.
+	local FilterRow = Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 56),
+		Size = UDim2.new(1, 0, 0, 24),
+		Parent = RightWrap,
+	})
+
 	local Events = Interface.New("ScrollingFrame", {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -58),
+		Size = UDim2.new(1, 0, 1, -84),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		ScrollBarThickness = 2,
@@ -241,6 +250,22 @@ return function(props: {
 
 	--// Rendering //--------------------------------------------------------------------------------
 	local MAX_EVENT_ROWS = 300
+
+	local Filter = "Combined" -- "Combined" | "Outgoing" | "Incoming"
+
+	-- Prompts and seats have no remote direction, but they ARE client-originated actions — the things
+	-- you actually did — so they group with Outgoing rather than being dropped. That keeps the
+	-- Outgoing view a usable "what I performed" list, which is the view worth turning into automation.
+	local function PassesFilter(event): boolean
+		if Filter == "Combined" then
+			return true
+		end
+		local kind = event.kind or "remote"
+		if kind == "remote" then
+			return event.type == Filter
+		end
+		return Filter == "Outgoing"
+	end
 
 	local function ClearEvents()
 		for _, child in ipairs(Events:GetChildren()) do
@@ -366,10 +391,17 @@ return function(props: {
 		if not session then
 			return
 		end
-		local total = #session.Events
-		local startIndex = math.max(1, total - MAX_EVENT_ROWS + 1)
-		for i = startIndex, total do
-			MakeEventRow(session.Events[i], i)
+		-- walk newest -> oldest so the row cap keeps the most RECENT matches, not the oldest ones
+		local shown = 0
+		for i = #session.Events, 1, -1 do
+			local event = session.Events[i]
+			if PassesFilter(event) then
+				MakeEventRow(event, i)
+				shown += 1
+				if shown >= MAX_EVENT_ROWS then
+					break
+				end
+			end
 		end
 		StickToTop()
 	end
@@ -378,8 +410,8 @@ return function(props: {
 	local function AppendLatestEvent(session)
 		local total = #session.Events
 		local event = session.Events[total]
-		if not event then
-			return
+		if not event or not PassesFilter(event) then
+			return -- still recorded, just not shown under the current filter
 		end
 		MakeEventRow(event, total)
 
@@ -608,6 +640,16 @@ return function(props: {
 		Recorder.StopPlayback()
 		RefreshToolbar()
 	end)
+
+	local FeedTabs = ViewSwitcher({
+		Parent = FilterRow,
+		Tabs = { "Combined", "Outgoing", "Incoming" },
+		OnSelected = function(Name)
+			Filter = Name
+			RenderEvents(View.Selected)
+		end,
+	})
+	FeedTabs:Select("Combined", true)
 
 	local function RefreshRecordButton()
 		local recording = Recorder.IsRecording()
