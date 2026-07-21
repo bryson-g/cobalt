@@ -842,6 +842,14 @@ function AgentAPI.SaveSession(id: string): boolean
 	return session ~= nil and rec.Save(session)
 end
 
+-- Attach free-text context to a session (what the run was, what to remember). Saved with it and
+-- returned by GetSession, so it survives across injections and is readable later.
+function AgentAPI.SetSessionNotes(id: string, notes: string?): boolean
+	local rec = Recorder()
+	local session = rec and rec.Get(id)
+	return session ~= nil and rec.SetNotes(session, notes)
+end
+
 function AgentAPI.RenameSession(id: string, name: string): boolean
 	local rec = Recorder()
 	local session = rec and rec.Get(id)

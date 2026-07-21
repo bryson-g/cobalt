@@ -217,10 +217,36 @@ return function(props: {
 		Parent = Toolbar,
 	})
 
+	-- Free-text notes stored with the session — what the run was, what to remember about it. Saved
+	-- with the recording and returned to the agent, so the context outlives the session in your head.
+	local NotesBox = Interface.New("TextBox", {
+		BackgroundColor3 = BG_INNER,
+		Position = UDim2.fromOffset(0, 56),
+		Size = UDim2.new(1, 0, 0, 38),
+		Text = "",
+		PlaceholderText = "Notes — what you did, what to remember…",
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true,
+		MultiLine = true,
+		TextEditable = false,
+		ClearTextOnFocus = false,
+		Visible = false,
+		Parent = RightWrap,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+		["UIPadding"] = {
+			PaddingLeft = UDim.new(0, 8),
+			PaddingRight = UDim.new(0, 8),
+			PaddingTop = UDim.new(0, 4),
+		},
+	})
+
 	-- Direction filter for the feed. All is the default so nothing is hidden until asked.
 	local FilterRow = Interface.New("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 56),
+		Position = UDim2.fromOffset(0, 98),
 		Size = UDim2.new(1, 0, 0, 24),
 		Parent = RightWrap,
 	})
@@ -243,7 +269,7 @@ return function(props: {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -84),
+		Size = UDim2.new(1, 0, 1, -126),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		ScrollBarThickness = 2,
@@ -481,6 +507,8 @@ return function(props: {
 		ExportButton.Visible = has
 		DeleteButton.Visible = has
 		NameBox.TextEditable = has
+		NotesBox.Visible = has
+		NotesBox.TextEditable = has
 		if has then
 			SaveButton.Text = session.Saved and "Re-save" or "Save"
 			SaveButton.BackgroundColor3 = session.Saved and Color3.fromRGB(40, 70, 55) or Color3.fromRGB(45, 70, 110)
@@ -488,9 +516,13 @@ return function(props: {
 			if not NameBox:IsFocused() then
 				NameBox.Text = session.Name
 			end
+			if not NotesBox:IsFocused() then
+				NotesBox.Text = session.Notes or ""
+			end
 		else
 			MetaLabel.Text = ""
 			NameBox.Text = ""
+			NotesBox.Text = ""
 		end
 	end
 
@@ -726,6 +758,13 @@ return function(props: {
 		RefreshToolbar()
 	end)
 
+	NotesBox.FocusLost:Connect(function()
+		local session = View.Selected
+		if session and NotesBox.Text ~= (session.Notes or "") then
+			Recorder.SetNotes(session, NotesBox.Text)
+		end
+	end)
+
 	-- committing the name field renames the session (and re-writes its file if already saved)
 	NameBox.FocusLost:Connect(function(enterPressed)
 		local session = View.Selected
@@ -805,7 +844,7 @@ return function(props: {
 				RenderEvents(session)
 				RefreshToolbar()
 			end
-		elseif kind == "saved" or kind == "renamed" then
+		elseif kind == "saved" or kind == "renamed" or kind == "notes" then
 			if session then
 				RefreshRow(session)
 			end

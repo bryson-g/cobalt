@@ -157,6 +157,7 @@ function Recorder.SessionToTable(session, opts)
 	return {
 		id = session.Id,
 		name = session.Name,
+		notes = session.Notes or "",
 		startedAt = session.StartedAt,
 		endedAt = session.EndedAt,
 		duration = (session.EndedAt or os.time()) - session.StartedAt,
@@ -240,6 +241,20 @@ function Recorder.Save(session): boolean
 	return ok
 end
 
+--- Free-text notes stored with the session: what you were doing, what to remember about the run.
+--- Persisted like the name, and surfaced to the agent in GetSession.
+function Recorder.SetNotes(session, notes: string?): boolean
+	if not session then
+		return false
+	end
+	session.Notes = tostring(notes or "")
+	if session.Saved then
+		Recorder.Save(session)
+	end
+	Notify("notes", session)
+	return true
+end
+
 function Recorder.Rename(session, name: string): boolean
 	if not session or type(name) ~= "string" or name == "" then
 		return false
@@ -283,6 +298,7 @@ function Recorder.LoadSaved(): number
 				local session = {
 					Id = data.id,
 					Name = data.name or "Restored session",
+					Notes = data.notes or "",
 					StartedAt = data.startedAt or os.time(),
 					StartClock = tick(),
 					EndedAt = data.endedAt or data.startedAt or os.time(),
