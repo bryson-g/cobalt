@@ -217,38 +217,75 @@ return function(props: {
 		Parent = Toolbar,
 	})
 
-	-- Free-text notes stored with the session — what the run was, what to remember about it. Saved
-	-- with the recording and returned to the agent, so the context outlives the session in your head.
+	-- The right pane is two views behind a switcher: the event feed, and a full-height notes editor.
+	-- Notes used to be a squeezed strip between the toolbar and the feed, which made anything longer
+	-- than a few words unreadable — they're the context you come back for, so they get real room.
+	local PaneTabsRow = Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 56),
+		Size = UDim2.new(1, 0, 0, 24),
+		Parent = RightWrap,
+	})
+
+	local ContentArea = Interface.New("Frame", {
+		AnchorPoint = Vector2.yAxis,
+		BackgroundTransparency = 1,
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, 1, -84),
+		Parent = RightWrap,
+	})
+
+	local ViewPane = Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Parent = ContentArea,
+	})
+
+	local NotesPane = Interface.New("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		Parent = ContentArea,
+	})
+
 	local NotesBox = Interface.New("TextBox", {
 		BackgroundColor3 = BG_INNER,
-		Position = UDim2.fromOffset(0, 56),
-		Size = UDim2.new(1, 0, 0, 38),
+		Size = UDim2.fromScale(1, 1),
 		Text = "",
-		PlaceholderText = "Notes — what you did, what to remember…",
-		TextSize = 13,
+		PlaceholderText = "Notes — what you did, what to remember, anything worth keeping with this run…",
+		TextSize = 14,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextYAlignment = Enum.TextYAlignment.Top,
 		TextWrapped = true,
 		MultiLine = true,
-		TextEditable = false,
 		ClearTextOnFocus = false,
-		Visible = false,
-		Parent = RightWrap,
+		TextEditable = false,
+		Parent = NotesPane,
 
 		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 		["UIPadding"] = {
-			PaddingLeft = UDim.new(0, 8),
-			PaddingRight = UDim.new(0, 8),
-			PaddingTop = UDim.new(0, 4),
+			PaddingLeft = UDim.new(0, 10),
+			PaddingRight = UDim.new(0, 10),
+			PaddingTop = UDim.new(0, 8),
+			PaddingBottom = UDim.new(0, 8),
 		},
 	})
+
+	local PaneTabs = ViewSwitcher({
+		Parent = PaneTabsRow,
+		Tabs = { "View", "Notes" },
+		OnSelected = function(Name)
+			ViewPane.Visible = Name == "View"
+			NotesPane.Visible = Name == "Notes"
+		end,
+	})
+	PaneTabs:Select("View", true)
 
 	-- Direction filter for the feed. All is the default so nothing is hidden until asked.
 	local FilterRow = Interface.New("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 98),
 		Size = UDim2.new(1, 0, 0, 24),
-		Parent = RightWrap,
+		Parent = ViewPane,
 	})
 
 	-- Suppressed traffic is recorded but hidden by default — it's the noise you already chose to
@@ -269,11 +306,11 @@ return function(props: {
 		AnchorPoint = Vector2.yAxis,
 		BackgroundTransparency = 1,
 		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 1, -126),
+		Size = UDim2.new(1, 0, 1, -28),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		ScrollBarThickness = 2,
-		Parent = RightWrap,
+		Parent = ViewPane,
 
 		["UIListLayout"] = {
 			FillDirection = Enum.FillDirection.Vertical,
@@ -507,7 +544,6 @@ return function(props: {
 		ExportButton.Visible = has
 		DeleteButton.Visible = has
 		NameBox.TextEditable = has
-		NotesBox.Visible = has
 		NotesBox.TextEditable = has
 		if has then
 			SaveButton.Text = session.Saved and "Re-save" or "Save"
