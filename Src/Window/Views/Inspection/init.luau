@@ -134,6 +134,83 @@ local function FormatValue(value): string
 	return tostring(value)
 end
 
+-- Curated, IsA-gated properties for an instance -> a plain map. Same source of truth as the details
+-- pane (PROPERTY_SETS), rendered to JSON-safe scalars so the tree copies cleanly.
+local function PropertyMap(instance): { [string]: any }
+	local map, seen = {}, {}
+	for _, set in ipairs(PROPERTY_SETS) do
+		local okIsA, isA = pcall(function()
+			return instance:IsA(set[1])
+		end)
+		if okIsA and isA then
+			for _, name in ipairs(set[2]) do
+				if not seen[name] then
+					seen[name] = true
+					local okRead, value = pcall(function()
+						return instance[name]
+					end)
+					if okRead then
+						map[name] = FormatValue(value)
+					end
+				end
+			end
+		end
+	end
+	return map
+end
+
+-- Serialise an instance and its descendants into a nested table the JSONEncoder accepts. Bounded:
+-- a node can hold thousands of children and the tree can be deep, so both are capped and the cut is
+-- marked with `truncated` rather than silently dropped.
+local COPY_MAX_DEPTH = 30
+local COPY_MAX_CHILDREN = 300
+local COPY_MAX_NODES = 5000
+
+local function SerializeTree(instance, depth: number, budget): any
+	budget.nodes += 1
+	local node = {
+		name = instance.Name,
+		className = instance.ClassName,
+		properties = PropertyMap(instance),
+	}
+
+	local okAttrs, attrs = pcall(function()
+		return instance:GetAttributes()
+	end)
+	if okAttrs and type(attrs) == "table" and next(attrs) ~= nil then
+		local out = {}
+		for key, value in pairs(attrs) do
+			out[tostring(key)] = FormatValue(value)
+		end
+		node.attributes = out
+	end
+
+	if depth >= COPY_MAX_DEPTH or budget.nodes >= COPY_MAX_NODES then
+		local ok, kids = pcall(function()
+			return #instance:GetChildren()
+		end)
+		if ok and kids > 0 then
+			node.truncated = ("depth/node cap reached (%d children not expanded)"):format(kids)
+		end
+		return node
+	end
+
+	local ok, children = pcall(function()
+		return instance:GetChildren()
+	end)
+	if ok and #children > 0 then
+		node.children = {}
+		for index, child in ipairs(children) do
+			if index > COPY_MAX_CHILDREN or budget.nodes >= COPY_MAX_NODES then
+				node.truncated = ("%d of %d children shown"):format(#node.children, #children)
+				break
+			end
+			node.children[#node.children + 1] = SerializeTree(child, depth + 1, budget)
+		end
+	end
+	return node
+end
+
 return function(props: {
 	MainFrame: GuiObject,
 	ContextMenu: any,
@@ -983,6 +1060,29 @@ return function(props: {
 								wax.shared.Sonner.success("Copied path")
 							else
 								wax.shared.Sonner.error("Failed to copy path")
+							end
+						end,
+					},
+					{
+						Text = "Copy JSON tree",
+						Icon = "braces",
+						Callback = function()
+							local instance = rec.Instance
+							if not instance then
+								return
+							end
+							local budget = { nodes = 0 }
+							local ok, tree = pcall(SerializeTree, instance, 0, budget)
+							local encoded = ok
+								and select(2, pcall(function()
+									return wax.shared.HttpService:JSONEncode(tree)
+								end))
+							if encoded and pcall(setclipboard, encoded) then
+								wax.shared.Sonner.success(
+									("Copied JSON tree — %d node%s"):format(budget.nodes, budget.nodes == 1 and "" or "s")
+								)
+							else
+								wax.shared.Sonner.error("Failed to copy JSON tree")
 							end
 						end,
 					},
