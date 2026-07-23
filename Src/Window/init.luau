@@ -175,6 +175,7 @@ local InspectionRoot = NewViewRoot(false)
 local SeatsRoot = NewViewRoot(false)
 local SessionsRoot = NewViewRoot(false)
 local PlaygroundRoot = NewViewRoot(false)
+local MiscRoot = NewViewRoot(false)
 
 --// Views \\--
 local LogsPage = require(script.Views.Logs)({
@@ -272,6 +273,13 @@ local PlaygroundView = require(script.Views.Playground)({
 	ContextMenu = ContextMenus,
 })
 Window.Playground = PlaygroundView
+
+-- rh fork: Misc — a bucket for small one-off tools.
+local MiscView = require(script.Views.Misc)({
+	MainFrame = MiscRoot,
+	ContextMenu = ContextMenus,
+})
+Window.Misc = MiscView
 -- the Remotes call list uses this to hand a call over and bring the tab forward
 Window.OpenPlayground = function(info)
 	if PlaygroundView.Load(info) and Switcher then
@@ -353,13 +361,14 @@ local TabStrip = Interface.New("Frame", {
 local CurrentMode = "Remotes"
 Switcher = require(script.Components.ViewSwitcher)({
 	Parent = TabStrip,
-	Tabs = { "Remotes", "Prompts", "Seats", "Sessions", "Playground", "Explorer" },
+	Tabs = { "Remotes", "Prompts", "Seats", "Sessions", "Playground", "Explorer", "Misc" },
 	OnSelected = function(Name)
 		CurrentMode = Name
 		RemotesRoot.Visible = Name == "Remotes"
 		PromptsRoot.Visible = Name == "Prompts"
 		InspectionRoot.Visible = Name == "Explorer"
 		PlaygroundRoot.Visible = Name == "Playground"
+		MiscRoot.Visible = Name == "Misc"
 		SeatsRoot.Visible = Name == "Seats"
 		SessionsRoot.Visible = Name == "Sessions"
 	end,
