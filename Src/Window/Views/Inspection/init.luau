@@ -1064,6 +1064,48 @@ return function(props: {
 						end,
 					},
 					{
+						-- BaseParts only: fire a Touched between the character's root and this part, the
+						-- way a pickup/interaction expects. firetouchinterest(root, part, 1) touches,
+						-- (…, 0) releases — most Touched handlers want the pair, so we do both.
+						Text = "Fire touch (character)",
+						Icon = "hand",
+						Condition = function()
+							local instance = rec.Instance
+							local ok, isPart = pcall(function()
+								return instance ~= nil and instance:IsA("BasePart")
+							end)
+							return ok and isPart
+						end,
+						Callback = function()
+							local instance = rec.Instance
+							if not (instance and instance:IsA("BasePart")) then
+								return
+							end
+							if not firetouchinterest then
+								wax.shared.Sonner.error("firetouchinterest unavailable on this executor")
+								return
+							end
+							local character = wax.shared.LocalPlayer and wax.shared.LocalPlayer.Character
+							local root = character and character:FindFirstChild("HumanoidRootPart")
+							if not root then
+								wax.shared.Sonner.warning("No HumanoidRootPart to touch with")
+								return
+							end
+							task.spawn(function()
+								local ok = pcall(function()
+									firetouchinterest(root, instance, 1)
+									task.wait()
+									firetouchinterest(root, instance, 0)
+								end)
+								if ok then
+									wax.shared.Sonner.success(("Fired touch on %s"):format(instance.Name))
+								else
+									wax.shared.Sonner.error("Touch failed")
+								end
+							end)
+						end,
+					},
+					{
 						Text = "Copy JSON tree",
 						Icon = "braces",
 						Callback = function()
