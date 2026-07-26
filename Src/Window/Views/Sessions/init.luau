@@ -261,13 +261,13 @@ return function(props: {
 		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 	})
 
-	-- Height is offset-0 + AutomaticSize.Y so it grows with the text (a scale height pins it to the
-	-- viewport and never grows — that was the no-scroll bug). A UISizeConstraint keeps the minimum at
-	-- the viewport height, so an empty or short note still fills the pane and stays clickable.
+	-- Height is set EXPLICITLY from a full-text measure. TextBox AutomaticSize.Y under-measures long
+	-- multiline text (it reports only a fraction of the wrapped height), so it never grew and never
+	-- scrolled. Instead we measure the whole text at the current width with GetTextBoundsAsync and set
+	-- the box height to max(viewport, contentHeight); the ScrollingFrame's canvas then follows it.
 	local NotesBox = Interface.New("TextBox", {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 1, 0),
 		Text = "",
 		PlaceholderText = "Notes — what you did, what to remember, anything worth keeping with this run…",
 		TextSize = 14,
@@ -279,8 +279,6 @@ return function(props: {
 		TextEditable = false,
 		Parent = NotesScroll,
 
-		["UISizeConstraint"] = {},
-
 		["UIPadding"] = {
 			PaddingLeft = UDim.new(0, 10),
 			PaddingRight = UDim.new(0, 12),
@@ -288,14 +286,32 @@ return function(props: {
 			PaddingBottom = UDim.new(0, 8),
 		},
 	})
-	do
-		local constraint = NotesBox:FindFirstChildWhichIsA("UISizeConstraint")
-		local function syncMin()
-			constraint.MinSize = Vector2.new(0, NotesScroll.AbsoluteWindowSize.Y)
+
+	local resizePending = false
+	local function ResizeNotes()
+		local width = NotesScroll.AbsoluteWindowSize.X - 24 -- minus horizontal padding
+		local viewport = NotesScroll.AbsoluteWindowSize.Y
+		if width <= 10 or viewport <= 0 then
+			return
 		end
-		NotesScroll:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(syncMin)
-		task.defer(syncMin)
+		local text = NotesBox.Text ~= "" and NotesBox.Text or NotesBox.PlaceholderText
+		local ok, _, height = pcall(wax.shared.GetTextBounds, text, NotesBox.FontFace, NotesBox.TextSize, width)
+		local content = (ok and height or 0) + 20 -- + vertical padding
+		NotesBox.Size = UDim2.new(1, 0, 0, math.max(viewport, content))
 	end
+	local function ScheduleResize()
+		if resizePending then
+			return
+		end
+		resizePending = true
+		task.defer(function()
+			resizePending = false
+			ResizeNotes()
+		end)
+	end
+	NotesBox:GetPropertyChangedSignal("Text"):Connect(ScheduleResize)
+	NotesScroll:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(ScheduleResize)
+	task.defer(ResizeNotes)
 
 	local PaneTabs = ViewSwitcher({
 		Parent = PaneTabsRow,
