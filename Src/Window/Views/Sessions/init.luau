@@ -261,9 +261,12 @@ return function(props: {
 		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 	})
 
+	-- Height is offset-0 + AutomaticSize.Y so it grows with the text (a scale height pins it to the
+	-- viewport and never grows — that was the no-scroll bug). A UISizeConstraint keeps the minimum at
+	-- the viewport height, so an empty or short note still fills the pane and stays clickable.
 	local NotesBox = Interface.New("TextBox", {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 1, 0), -- at least fill the pane; grows past it as text is added
+		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Text = "",
 		PlaceholderText = "Notes — what you did, what to remember, anything worth keeping with this run…",
@@ -276,6 +279,8 @@ return function(props: {
 		TextEditable = false,
 		Parent = NotesScroll,
 
+		["UISizeConstraint"] = {},
+
 		["UIPadding"] = {
 			PaddingLeft = UDim.new(0, 10),
 			PaddingRight = UDim.new(0, 12),
@@ -283,6 +288,14 @@ return function(props: {
 			PaddingBottom = UDim.new(0, 8),
 		},
 	})
+	do
+		local constraint = NotesBox:FindFirstChildWhichIsA("UISizeConstraint")
+		local function syncMin()
+			constraint.MinSize = Vector2.new(0, NotesScroll.AbsoluteWindowSize.Y)
+		end
+		NotesScroll:GetPropertyChangedSignal("AbsoluteWindowSize"):Connect(syncMin)
+		task.defer(syncMin)
+	end
 
 	local PaneTabs = ViewSwitcher({
 		Parent = PaneTabsRow,
