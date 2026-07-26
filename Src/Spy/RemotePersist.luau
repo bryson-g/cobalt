@@ -115,17 +115,38 @@ end
 
 --// Snapshot / restore //--------------------------------------------------------------------------
 
--- Serialise the current capture (non-ignored) to disk. Cheap enough for a 5s cadence: capped per
--- remote and in total.
+local function ReadFile()
+	local helper = FileHelper.new(DIR)
+	if not helper:DoesExist(FILE) then
+		return nil
+	end
+	local ok, data = pcall(function()
+		return wax.shared.HttpService:JSONDecode(helper:ReadFile(FILE))
+	end)
+	if ok and type(data) == "table" and type(data.remotes) == "table" then
+		return data.remotes
+	end
+	return nil
+end
+
+-- Snapshot the current capture (non-ignored) to disk, MERGED with what's already saved. Merge, not
+-- replace, is the whole point: a fresh session that hasn't re-seen a saved remote yet must not wipe
+-- its history from the file — a plain overwrite would clobber the saved log with a sparse one, which
+-- is exactly the "rejoined and it was empty" failure. Remotes not live this session are preserved;
+-- live ones are updated. Capped per remote and in total.
 function RemotePersist.Snapshot()
-	local remotes = {}
+	local byPath, order = {}, {}
+	for _, remote in ipairs(ReadFile() or {}) do
+		if remote.path and not byPath[remote.path] then
+			byPath[remote.path] = remote
+			order[#order + 1] = remote.path
+		end
+	end
+
 	for direction, category in pairs(wax.shared.Logs or {}) do
 		for instance, log in pairs(category) do
 			if typeof(instance) ~= "Instance" or log.Ignored or #log.Calls == 0 then
 				continue
-			end
-			if #remotes >= MAX_REMOTES then
-				break
 			end
 			local calls = {}
 			local total = #log.Calls
@@ -138,13 +159,25 @@ function RemotePersist.Snapshot()
 					args = SerialiseArgs(call),
 				}
 			end
-			remotes[#remotes + 1] = {
-				path = PathOf(instance),
+			local path = PathOf(instance)
+			if not byPath[path] then
+				order[#order + 1] = path
+			end
+			byPath[path] = {
+				path = path,
 				name = instance.Name,
 				class = instance.ClassName,
 				direction = direction,
 				calls = calls,
 			}
+		end
+	end
+
+	local remotes = {}
+	for _, path in ipairs(order) do
+		remotes[#remotes + 1] = byPath[path]
+		if #remotes >= MAX_REMOTES then
+			break
 		end
 	end
 
@@ -154,30 +187,43 @@ function RemotePersist.Snapshot()
 	end)
 end
 
--- Restore persisted remotes into the live log store, keyed back onto the live instance at each path.
--- Returns (restoredRemotes, restoredCalls, skipped).
-function RemotePersist.Restore(): (number, number, number)
-	local helper = FileHelper.new(DIR)
-	if not helper:DoesExist(FILE) then
-		return 0, 0, 0
+-- Has this log already been restored (idempotency, so a retry can't double-append)?
+local function AlreadyRestored(log): boolean
+	for _, call in ipairs(log.Calls) do
+		if call.WasPersisted then
+			return true
+		end
 	end
-	local ok, data = pcall(function()
-		return wax.shared.HttpService:JSONDecode(helper:ReadFile(FILE))
-	end)
-	if not ok or type(data) ~= "table" or type(data.remotes) ~= "table" then
+	return false
+end
+
+-- Restore persisted remotes into the live log store, keyed back onto the live instance at each path.
+-- Idempotent: a remote whose log already holds persisted calls is skipped, so calling this again (the
+-- retry below) only fills in remotes that have since resolved. When fireUI is true (the retry, after
+-- the window exists), newly-attached logs are pushed to the Remotes list via the Communicator.
+-- Returns (restored, calls, resolvedButPending-count is folded into skipped).
+function RemotePersist.Restore(fireUI: boolean?): (number, number, number)
+	local remotes = ReadFile()
+	if not remotes then
 		return 0, 0, 0
 	end
 
 	local restored, calls, skipped = 0, 0, 0
-	for _, remote in ipairs(data.remotes) do
+	local batch = {}
+	for _, remote in ipairs(remotes) do
 		local instance = ResolvePath(remote.path)
 		local category = instance and wax.shared.Logs[remote.direction]
 		if not (instance and category) then
-			skipped += 1
+			skipped += 1 -- path not present yet; the retry will pick it up once it replicates
 			continue
 		end
 
 		local log = category[instance] or wax.shared.NewLog(instance, remote.direction)
+		if AlreadyRestored(log) then
+			continue -- restored on an earlier pass
+		end
+
+		local lastIndex
 		for _, call in ipairs(remote.calls or {}) do
 			local args = { n = 0 }
 			for index, value in ipairs(call.args or {}) do
@@ -196,9 +242,23 @@ function RemotePersist.Restore(): (number, number, number)
 			if not info.IsExecutor then
 				table.insert(log.GameCalls, idx)
 			end
+			lastIndex = idx
 			calls += 1
 		end
 		restored += 1
+
+		if fireUI and lastIndex then
+			batch[#batch + 1] =
+				{ Instance = instance, Type = remote.direction, LogIndex = log.Index, CallIndex = lastIndex }
+		end
+	end
+
+	-- Push newly-attached logs to the live Remotes list (the initial pass renders via ShowTab; a
+	-- retry happens after the window exists, so it has to notify the list itself).
+	if fireUI and #batch > 0 and wax.shared.Communicator then
+		pcall(function()
+			wax.shared.Communicator:Fire(batch)
+		end)
 	end
 	return restored, calls, skipped
 end
@@ -230,21 +290,28 @@ function RemotePersist.SetOn(on: boolean)
 			wax.shared.Sonner.info("Persisting remote activity across re-injection")
 		end
 	else
-		pcall(function()
-			FileHelper.new(DIR):DeleteFile(FILE)
-		end)
+		RemotePersist.ClearSaved()
 		if wax.shared.Sonner then
 			wax.shared.Sonner.info("Stopped persisting — cleared the saved log")
 		end
 	end
 end
 
--- Called once at load: restore a prior capture and resume the writer if persist was left on.
+-- Delete the saved capture. Used by the "off" toggle and the topbar clear ("reset everything").
+function RemotePersist.ClearSaved()
+	pcall(function()
+		FileHelper.new(DIR):DeleteFile(FILE)
+	end)
+end
+
+-- Called once at load: restore a prior capture and resume the writer if persist was left on. Remotes
+-- whose path hasn't replicated yet are retried a couple of times, since a fresh join may not have the
+-- full ReplicatedStorage tree the instant Cobalt loads.
 function RemotePersist.Init()
 	if not RemotePersist.IsOn() then
 		return
 	end
-	local restored, calls = RemotePersist.Restore()
+	local restored, calls, skipped = RemotePersist.Restore(false)
 	RemotePersist.StartWriter()
 	if restored > 0 and wax.shared.Sonner then
 		wax.shared.Sonner.success(("Restored %d persisted remote%s (%d calls)"):format(
@@ -252,6 +319,16 @@ function RemotePersist.Init()
 			restored == 1 and "" or "s",
 			calls
 		))
+	end
+
+	if skipped > 0 then
+		for _, delay in ipairs({ 5, 12 }) do
+			task.delay(delay, function()
+				if RemotePersist.IsOn() and not wax.shared.Unloaded then
+					RemotePersist.Restore(true) -- idempotent; fills in late-replicating remotes + UI
+				end
+			end)
+		end
 	end
 end
 

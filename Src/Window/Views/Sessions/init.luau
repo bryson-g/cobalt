@@ -248,9 +248,23 @@ return function(props: {
 		Parent = ContentArea,
 	})
 
-	local NotesBox = Interface.New("TextBox", {
+	-- Notes scroll when they overflow: the TextBox grows with its content (AutomaticSize Y) inside a
+	-- ScrollingFrame, instead of being clamped to the pane height with the overflow simply clipped.
+	local NotesScroll = Interface.New("ScrollingFrame", {
 		BackgroundColor3 = BG_INNER,
 		Size = UDim2.fromScale(1, 1),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 4,
+		Parent = NotesPane,
+
+		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
+	})
+
+	local NotesBox = Interface.New("TextBox", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 1, 0), -- at least fill the pane; grows past it as text is added
+		AutomaticSize = Enum.AutomaticSize.Y,
 		Text = "",
 		PlaceholderText = "Notes — what you did, what to remember, anything worth keeping with this run…",
 		TextSize = 14,
@@ -260,12 +274,11 @@ return function(props: {
 		MultiLine = true,
 		ClearTextOnFocus = false,
 		TextEditable = false,
-		Parent = NotesPane,
+		Parent = NotesScroll,
 
-		["UICorner"] = { CornerRadius = UDim.new(0, 4) },
 		["UIPadding"] = {
 			PaddingLeft = UDim.new(0, 10),
-			PaddingRight = UDim.new(0, 10),
+			PaddingRight = UDim.new(0, 12),
 			PaddingTop = UDim.new(0, 8),
 			PaddingBottom = UDim.new(0, 8),
 		},

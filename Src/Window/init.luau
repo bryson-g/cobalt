@@ -382,8 +382,14 @@ wax.shared.ClearActiveView = function()
 		PromptsView.ClearAll()
 	elseif wax.shared.ClearLogs then
 		pcall(wax.shared.ClearLogs)
+		-- rh fork: clearing Remotes also nukes the persisted capture on disk — "reset everything".
+		-- The live logs are gone and, if persist is on, the next snapshot writes the now-empty state,
+		-- so nothing lingers.
+		if wax.shared.RemotePersist then
+			pcall(wax.shared.RemotePersist.ClearSaved)
+		end
 		if wax.shared.Sonner then
-			wax.shared.Sonner.success("Cleared captured calls")
+			wax.shared.Sonner.success("Cleared captured calls" .. (wax.shared.RemotePersist and " + saved persist" or ""))
 		end
 	end
 end
