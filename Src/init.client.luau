@@ -467,6 +467,21 @@ wax.shared.SetupLoggingConnection = function()
 				continue
 			end
 
+			-- rh fork: an IGNORED remote must never reach the file logs. Ignoring is a VISIBILITY
+			-- choice, not a capture or blocking one — the traffic still runs, hooks still see it, and
+			-- the call is still captured so it can be revealed on demand. But it may only surface in
+			-- the two places that explicitly opt in: the Remotes view's "show ignored" toggle, and a
+			-- session recording (which keeps everything so a session is the complete picture).
+			--
+			-- Without this skip, turning "show ignored" on routed suppressed calls through the normal
+			-- QueueNotification path, and this consumer — the writer for Cobalt/Logs/*.log — is on that
+			-- same notification. So the moment you wanted to LOOK at ignored traffic, every ignored
+			-- call started being written to disk, which is exactly what ignoring a spammy 1 Hz remote
+			-- is meant to prevent (these files already reach 100s of MB per session).
+			if CallDataFromHook.WasIgnored then
+				continue
+			end
+
 			LogQueueTail += 1
 			LogQueue[LogQueueTail] = {
 				Instance = RemoteInstance,
@@ -520,6 +535,11 @@ wax.shared.NewLog = function(Instance, Type, CallingScript)
 	end
 	return Log
 end
+
+-- rh fork: restore persisted remote activity (if Persist was left on) BEFORE the window builds, so
+-- the restored logs are present when the Remotes list first renders.
+wax.shared.RemotePersist = require(script.Spy.RemotePersist)
+pcall(wax.shared.RemotePersist.Init)
 
 local Window = require(script.Window)
 -- rh fork: expose the window so the agent/bridge can drive the UI (e.g. Window.Inspection.Reveal(inst)).

@@ -231,6 +231,14 @@ return {
 		Schema = StringBoolMap,
 	}),
 
+	--// rh fork: persist remote activity across re-injection (DevTools "Preserve log"). No UI control
+	-- here — toggled from the ⟳ button in the Remotes panel. See Src/Spy/RemotePersist.
+	PersistRemotes = Setting.new({
+		Key = "PersistRemotes",
+		Default = false,
+		Schema = Schema.boolean(),
+	}),
+
 	--// File Logging Section \\--
 	-- rh fork: default OFF. The compact JSON export (CobaltAgent.ExportLogs) is the agent-facing
 	-- capture; the giant .log files are opt-in (heavy disk I/O every remote). Turn on from Settings

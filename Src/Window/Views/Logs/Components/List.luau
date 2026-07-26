@@ -39,7 +39,7 @@ return function(props: {
 
 	local RemoteTabContainer = Interface.New("Frame", {
 		BackgroundColor3 = Color3.fromRGB(25, 25, 25),
-		Size = UDim2.new(1, -34, 0, 30), -- room for the show-ignored toggle beside it
+		Size = UDim2.new(1, -68, 0, 30), -- room for the persist + show-ignored toggles beside it
 		Parent = LeftList,
 
 		["UICorner"] = {
@@ -70,6 +70,40 @@ return function(props: {
 			CornerRadius = UDim.new(0, 4),
 		},
 	})
+
+	-- rh fork: persist toggle (DevTools "Preserve log"). When on, the captured remotes are snapshotted
+	-- to disk and restored on the next injection, so the log survives a teleport/rejoin. Temp: turning
+	-- it off deletes the saved file. State lives in Settings, so it stays on across re-injections.
+	local PersistButton = Interface.New("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundColor3 = Color3.fromRGB(25, 25, 25),
+		Position = UDim2.new(1, -34, 0, 0),
+		Size = UDim2.fromOffset(30, 30),
+		Text = "⟳",
+		TextSize = 15,
+		TextTransparency = 0.5,
+		Parent = LeftList,
+
+		["UICorner"] = {
+			CornerRadius = UDim.new(0, 4),
+		},
+	})
+	do
+		local RemotePersist = wax.shared.RemotePersist
+		local function refresh()
+			local on = RemotePersist and RemotePersist.IsOn()
+			PersistButton.TextTransparency = on and 0 or 0.5
+			PersistButton.TextColor3 = on and Color3.fromRGB(120, 200, 140) or Color3.new(1, 1, 1)
+			PersistButton.BackgroundColor3 = on and Color3.fromRGB(30, 55, 38) or Color3.fromRGB(25, 25, 25)
+		end
+		PersistButton.MouseButton1Click:Connect(function()
+			if RemotePersist then
+				RemotePersist.SetOn(not RemotePersist.IsOn())
+				refresh()
+			end
+		end)
+		refresh()
+	end
 
 	local RemoteListWrapper = Interface.New("Frame", {
 		AnchorPoint = Vector2.yAxis,

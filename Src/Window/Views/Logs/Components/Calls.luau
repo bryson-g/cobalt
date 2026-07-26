@@ -436,13 +436,14 @@ return function(props: {
 			return
 		end
 
-		if not IsShowingExecutorLogs() and not CallInfo.Origin then
+		if not IsShowingExecutorLogs() and not CallInfo.Origin and not CallInfo.WasPersisted then
 			return
 		end
 
 		local IsBlockedCall = CallInfo.Blocked == true
 		-- rh fork: captured only while "show ignored" is on; flagged so it reads as suppressed traffic
 		local IsIgnoredCall = CallInfo.WasIgnored == true
+		local IsPersistedCall = CallInfo.WasPersisted == true
 		local IsHighlightedCall = not IsBlockedCall and CallInfo.Highlighted == true
 		local CallFrame = self:AcquireCallFrame()
 		local Data = self.CallFrameData[CallFrame]
@@ -536,6 +537,8 @@ return function(props: {
 			or "Unknown"
 		if IsIgnoredCall then
 			OriginText = "⊘ " .. OriginText .. " (ignored)"
+		elseif IsPersistedCall then
+			OriginText = "⟳ persisted"
 		end
 		local OriginIcon
 		if IsBlockedCall then
