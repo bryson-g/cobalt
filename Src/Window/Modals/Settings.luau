@@ -280,13 +280,24 @@ return function(props: {
 					Live.Ignored = false
 				end
 				if wax.shared.AgentAPI and Instance then
-					pcall(wax.shared.AgentAPI.SetIgnored, Instance, false)
+					pcall(wax.shared.AgentAPI.SetIgnored, Instance, false, RemoteData.Type)
 					-- rh fork: also sync the actor VMs, so un-ignoring here lands everywhere the
 					-- ignore did (this is the one place the decision gets undone).
 					pcall(wax.shared.AgentAPI.SyncIgnoreState, Live or RemoteData, false)
 				end
 			end,
 		})
+
+		-- rh fork: ignores persist across injections, so a set built up over time can silence remotes
+		-- long after you've forgotten deciding to. This is the clean slate.
+		IgnoredRemotesSection:CreateButton("Clear All Persisted Ignores", function()
+			if wax.shared.AgentAPI then
+				pcall(wax.shared.AgentAPI.ClearIgnores)
+			end
+			pcall(function()
+				IgnoredList:SetList({})
+			end)
+		end)
 
 		-- rh fork: surface remotes that are already ignored (restored from Cobalt/Settings.json this
 		-- session) so the operator can see + toggle the persisted set, not just ones ignored just now.

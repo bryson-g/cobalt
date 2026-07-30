@@ -59,19 +59,53 @@ end
 
 --// Persistence hooks (called from Log.luau + init) ///////////////////////////////////////////////
 
--- Is this remote in the persisted ignore set?
-function AgentAPI.IsIgnored(instance): boolean
-	return LoadIgnores()[RemoteKey(instance)] == true
+-- Ignores are stored PER DIRECTION ("<path>::Outgoing"), because that's the granularity the UI works
+-- at: right-clicking "GetAllData (Outgoing)" must not also silence the Incoming side. The original
+-- scheme keyed on the bare path, so one ignore resurrected as two on the next injection and looked
+-- like something was auto-ignoring. Bare-path keys are still honoured as LEGACY (and migrated on
+-- sight) so decisions already on disk aren't lost.
+local function DirectionKey(instance, direction: string?): string
+	local key = RemoteKey(instance)
+	if direction == nil or direction == "" then
+		return key
+	end
+	return key .. "::" .. direction
+end
+AgentAPI.DirectionKey = DirectionKey
+
+-- Is this remote ignored? Matches the per-direction key, falling back to a legacy bare-path key.
+function AgentAPI.IsIgnored(instance, direction: string?): boolean
+	local set = LoadIgnores()
+	if direction and set[DirectionKey(instance, direction)] == true then
+		return true
+	end
+	return set[RemoteKey(instance)] == true
 end
 
--- Persist an ignore decision for a remote (called from Log:Ignore so UI + right-click persist).
-function AgentAPI.SetIgnored(instance, ignored: boolean)
+-- Persist an ignore decision (called from Log:Ignore so UI + right-click persist). Clearing removes
+-- the legacy bare-path key too, otherwise un-ignoring wouldn't stick across an injection.
+function AgentAPI.SetIgnored(instance, ignored: boolean, direction: string?)
 	local set = LoadIgnores()
-	local key = RemoteKey(instance)
+	local path = RemoteKey(instance)
 	if ignored then
-		set[key] = true
+		set[DirectionKey(instance, direction)] = true
 	else
-		set[key] = nil
+		set[DirectionKey(instance, direction)] = nil
+		set[path] = nil -- legacy key, or this un-ignore would be undone on the next load
+	end
+	StoreIgnores(set)
+end
+
+-- Rewrite a legacy bare-path key as explicit per-direction keys, so later operations are unambiguous.
+local function MigrateLegacyKey(instance)
+	local set = LoadIgnores()
+	local path = RemoteKey(instance)
+	if set[path] == nil then
+		return
+	end
+	set[path] = nil
+	for _, direction in ipairs({ "Outgoing", "Incoming" }) do
+		set[path .. "::" .. direction] = true
 	end
 	StoreIgnores(set)
 end
@@ -115,7 +149,8 @@ function AgentAPI.RestoreLog(log)
 	if not log or not log.Instance then
 		return
 	end
-	if LoadIgnores()[RemoteKey(log.Instance)] then
+	if AgentAPI.IsIgnored(log.Instance, log.Type) then
+		MigrateLegacyKey(log.Instance) -- turn a direction-less decision into explicit ones, once
 		log.Ignored = true
 		SyncIgnoreState(log, true)
 	end
@@ -147,7 +182,7 @@ function AgentAPI.IgnoreRemote(nameOrPath: string): number
 	for _, log in ipairs(MatchingLogs(nameOrPath)) do
 		local changed = not log.Ignored
 		log.Ignored = true
-		set[RemoteKey(log.Instance)] = true
+		set[DirectionKey(log.Instance, log.Type)] = true
 		if changed then
 			SyncIgnoreState(log, true) -- Settings list + actor VMs, same as a right-click Ignore
 		end
@@ -167,7 +202,8 @@ function AgentAPI.ShowRemote(nameOrPath: string): number
 	for _, log in ipairs(MatchingLogs(nameOrPath)) do
 		local changed = log.Ignored
 		log.Ignored = false
-		set[RemoteKey(log.Instance)] = nil
+		set[DirectionKey(log.Instance, log.Type)] = nil
+		set[RemoteKey(log.Instance)] = nil -- legacy bare-path key
 		if changed then
 			SyncIgnoreState(log, false)
 		end
@@ -188,6 +224,28 @@ function AgentAPI.ListIgnored(): { string }
 	return out
 end
 
+-- Wipe every persisted remote ignore and un-ignore the live logs. The escape hatch for "things are
+-- ignored and I don't know why" — decisions accumulate across injections, so a clean slate matters.
+function AgentAPI.ClearIgnores(): number
+	local cleared = 0
+	for _ in pairs(LoadIgnores()) do
+		cleared += 1
+	end
+	StoreIgnores({})
+	for _, category in pairs(wax.shared.Logs or {}) do
+		for instance, log in pairs(category) do
+			if typeof(instance) == "Instance" and log.Ignored then
+				log.Ignored = false
+				SyncIgnoreState(log, false)
+			end
+		end
+	end
+	if wax.shared.Sonner then
+		pcall(wax.shared.Sonner.success, ("Cleared %d persisted ignore%s"):format(cleared, cleared == 1 and "" or "s"))
+	end
+	return cleared
+end
+
 -- Bulk-set the farm-tuned ignore list (replaces the persisted set with `keys`).
 function AgentAPI.SetIgnoreList(keys: { string })
 	local set = {}
@@ -199,7 +257,7 @@ function AgentAPI.SetIgnoreList(keys: { string })
 	for _, category in pairs(wax.shared.Logs or {}) do
 		for instance, log in pairs(category) do
 			if typeof(instance) == "Instance" then
-				local ignored = set[RemoteKey(instance)] == true
+				local ignored = set[DirectionKey(instance, log.Type)] == true or set[RemoteKey(instance)] == true
 				if log.Ignored ~= ignored then
 					log.Ignored = ignored
 					SyncIgnoreState(log, ignored)

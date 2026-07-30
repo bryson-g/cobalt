@@ -519,7 +519,7 @@ function Log:Ignore()
 
 		-- rh fork: persist the ignore decision to Cobalt/Settings.json so it survives re-injection.
 		if wax.shared.AgentAPI then
-			pcall(wax.shared.AgentAPI.SetIgnored, self.Instance, self.Ignored)
+			pcall(wax.shared.AgentAPI.SetIgnored, self.Instance, self.Ignored, self.Type)
 		end
 	end
 end
